@@ -1,5 +1,24 @@
 # NSS Development Environment
 
+## IMPORTANT: Always Use a Worktree
+**Before doing ANY work** (reading code to make changes, building, testing, applying patches, etc.), create a git worktree. NEVER modify files directly in `/workspaces/nss-dev/nss/`. The main checkout must stay clean.
+
+```sh
+# 1. Create the worktree (use a descriptive name, e.g. bug number or feature)
+git -C /workspaces/nss-dev/nss worktree add --detach /workspaces/nss-dev/worktrees/<name>
+# 2. Symlink NSPR so build.sh can find it
+ln -sfn /workspaces/nss-dev/nspr /workspaces/nss-dev/worktrees/nspr
+# 3. Do all work inside the worktree
+cd /workspaces/nss-dev/worktrees/<name>
+# 4. Build with a separate dist directory
+NSS_DIST_DIR=/workspaces/nss-dev/dist-<name> ./build.sh
+# 5. Run tests against the matching dist
+cd tests
+DIST=/workspaces/nss-dev/dist-<name> HOST=localhost DOMSUF=localdomain USE_64=1 bash ssl_gtests/ssl_gtests.sh
+```
+
+Clean up when done: `git -C /workspaces/nss-dev/nss worktree remove /workspaces/nss-dev/worktrees/<name>`
+
 ## Project
 This is a dev container for working on Mozilla NSS (Network Security Services) and NSPR (Netscape Portable Runtime).
 
@@ -37,18 +56,6 @@ DIST=/workspaces/nss-dev/dist-mybranch HOST=localhost DOMSUF=localdomain USE_64=
 - `./build.sh --ubsan --asan` — combine sanitizers in a single build (both work together)
 
 Build output goes to `../dist/`.
-
-### Worktrees for isolated work
-Use git worktrees to work on patches without touching the main checkout:
-```sh
-git -C /workspaces/nss-dev/nss worktree add --detach /workspaces/nss-dev/worktrees/my-work
-# Ensure NSPR is findable (build.sh resolves $cwd/../nspr)
-ln -sfn /workspaces/nss-dev/nspr /workspaces/nss-dev/worktrees/nspr
-# Build in the worktree with a separate dist
-cd /workspaces/nss-dev/worktrees/my-work
-NSS_DIST_DIR=/workspaces/nss-dev/dist-my-work ./build.sh
-```
-Clean up when done: `git -C /workspaces/nss-dev/nss worktree remove /workspaces/nss-dev/worktrees/my-work`
 
 ## Source Control
 Repos are cloned via git-cinnabar. Use standard git commands — cinnabar translates to/from Mercurial transparently.
