@@ -1,7 +1,7 @@
 ---
 name: nss-review
-description: Review an NSS/NSPR bug patch. Use when the user says "/nss-review BUGNUM", "review bug XXXXX", "review patch for bug", or similar. Performs full patch validation including test verification, sanitizer builds, fuzzing, and coverage analysis.
-version: 1.3.0
+description: Review an NSS/NSPR bug patch. Use when the user says "/nss-review BUGNUM", "review bug XXXXX", "review patch for bug", "review patches in worktree <name>", or similar. Performs full patch validation including test verification, sanitizer builds, fuzzing, and coverage analysis.
+version: 1.4.0
 disable-model-invocation: true
 ---
 
@@ -20,54 +20,112 @@ date -u +%s
 
 ## Phase 0: Locate the Diff
 
-### 0a. Determine the bug number
+### 0a. Determine the mode and bug number
 
-If `$ARGUMENTS` is non-empty, use it as the bug number. Otherwise, find the latest bug folder under `/workspaces/nss-dev/bugs/` by listing subdirectories sorted by name and taking the last one. Use that folder's name as the bug number for the rest of this review.
+Parse `$ARGUMENTS` to determine the review mode:
 
-### 0b. Set up a dedicated review worktree
+**Worktree mode** — the argument mentions "worktree" or names an existing directory under `/workspaces/nss-dev/worktrees/`:
+- Extract the worktree name (e.g., `bug-2026089-review` from "The patches in worktree bug-2026089-review").
+- Derive the bug number from the worktree name if possible (e.g., `bug-2026089-review` → bug number `bug-2026089`; strip any trailing `-review` or other suffix after the numeric ID).
+- Set `MODE=worktree`, `WORKTREE_NAME=<extracted name>`, `BUGNUM=<derived bug number>`.
 
-Create an isolated git worktree for this review so that applying patches, building, and running tests does not touch the main checkout. The worktree is a detached HEAD at the current tip of the main tree.
+**Bug-number mode** — the argument is a raw bug number or `bug-XXXXXXX`:
+- Set `MODE=bug`, `BUGNUM=<bug number>`.
+- If `$ARGUMENTS` is empty, use the latest folder under `/workspaces/nss-dev/bugs/` sorted by name.
 
+### 0b. Set up the working directory and dist path
+
+**Worktree mode:**
 ```sh
-BUGNUM=<bug number from 0a>
+NSS_DIR=/workspaces/nss-dev/worktrees/$WORKTREE_NAME
+NSS_DIST_DIR=/workspaces/nss-dev/dist-$WORKTREE_NAME
+
+# Verify the worktree exists
+if [ ! -d "$NSS_DIR" ]; then
+  echo "ERROR: worktree $NSS_DIR does not exist — check the name and try again"
+  exit 1
+fi
+
+# Ensure NSPR symlink exists
+ln -sfn /workspaces/nss-dev/nspr /workspaces/nss-dev/worktrees/nspr
+
+echo "MODE:         worktree"
+echo "NSS_DIR:      $NSS_DIR"
+echo "NSS_DIST_DIR: $NSS_DIST_DIR"
+```
+
+**Bug-number mode:**
+```sh
 WORKTREE_DIR=/workspaces/nss-dev/worktrees/review-$BUGNUM
 NSS_DIST_DIR=/workspaces/nss-dev/dist-review-$BUGNUM
 
-# Always create the parent dir first so the nspr symlink can be placed there.
 mkdir -p /workspaces/nss-dev/worktrees
 
 if [ -d "$WORKTREE_DIR" ]; then
   echo "Reusing existing worktree: $WORKTREE_DIR"
 else
   echo "Creating worktree: $WORKTREE_DIR"
-  # A stale registry entry (no live directory) may exist from a previous run.
-  # --force lets git overwrite it without touching any other active worktrees.
   git -C /workspaces/nss-dev/nss worktree add --detach "$WORKTREE_DIR" \
     || git -C /workspaces/nss-dev/nss worktree add --force --detach "$WORKTREE_DIR"
 fi
 
 NSS_DIR=$WORKTREE_DIR
-
-# Ensure the worktree can find NSPR (build.sh resolves $cwd/../nspr)
 ln -sfn /workspaces/nss-dev/nspr /workspaces/nss-dev/worktrees/nspr
 
+echo "MODE:         bug"
 echo "NSS_DIR:      $NSS_DIR"
 echo "NSS_DIST_DIR: $NSS_DIST_DIR"
 ```
 
 All subsequent phases use `$NSS_DIR` and `$NSS_DIST_DIR`. The main checkout at `/workspaces/nss-dev/nss` and its dist at `/workspaces/nss-dev/dist` are never touched.
 
-### 0c. Find the patch
+### 0c. Obtain the patch diff
 
-Search for the patch file in `/workspaces/nss-dev/bugs/<BUGNUM>/attachments/` — list all `.diff` and `.patch` files there. If multiple exist, review all of them.
+**Worktree mode** — generate the diff from the commits in the worktree:
+```sh
+# Find the common ancestor between the worktree tip and the main checkout tip.
+BASE=$(git -C "$NSS_DIR" merge-base HEAD \
+       $(git -C /workspaces/nss-dev/nss rev-parse HEAD))
+echo "Base commit: $BASE"
+echo "Commits on this worktree:"
+git -C "$NSS_DIR" log --oneline "$BASE"..HEAD
 
-If no diff is found, stop and ask the user where the patch file is located.
+# Export the cumulative diff as the canonical patch file for this review.
+PATCH_FILE=/tmp/review-$WORKTREE_NAME.diff
+git -C "$NSS_DIR" diff "$BASE"..HEAD > "$PATCH_FILE"
+echo "Patch file: $PATCH_FILE ($(wc -l < $PATCH_FILE) lines)"
+```
+
+Also check whether a bug folder exists for additional context (summaries, Bugzilla attachments):
+```sh
+BUG_DIR=/workspaces/nss-dev/bugs/$BUGNUM
+if [ -d "$BUG_DIR" ]; then
+  echo "Bug context available at $BUG_DIR"
+  ls "$BUG_DIR"
+else
+  echo "No bugs/ folder found for $BUGNUM — working from worktree commits only"
+fi
+```
+
+**Bug-number mode** — find patch files in the attachments folder:
+```sh
+ATTACH_DIR=/workspaces/nss-dev/bugs/$BUGNUM/attachments
+ls "$ATTACH_DIR"/*.diff "$ATTACH_DIR"/*.patch 2>/dev/null \
+  || { echo "ERROR: no .diff or .patch files found in $ATTACH_DIR"; exit 1; }
+
+# Combine all patch files into a single canonical diff for later phases.
+PATCH_FILE=/tmp/review-$BUGNUM.diff
+cat "$ATTACH_DIR"/*.diff "$ATTACH_DIR"/*.patch 2>/dev/null > "$PATCH_FILE"
+echo "Patch file: $PATCH_FILE"
+```
 
 ---
 
 ## Phase 1: Patch Analysis
 
-Read the full diff. Internally note the files changed, subsystems affected, relevant fuzzers and test suites — you need these to drive later phases. Only output a 1-2 sentence summary of what the patch does. Save detailed file lists for the final report.
+Read the full diff at `$PATCH_FILE`. Internally note the files changed, subsystems affected, relevant fuzzers and test suites — you need these to drive later phases. Only output a 1-2 sentence summary of what the patch does. Save detailed file lists for the final report.
+
+If a `bugs/$BUGNUM/index.md` or similar summary file exists, read it for additional context on the bug being fixed.
 
 ---
 
@@ -77,20 +135,27 @@ This phase verifies that any new test cases in the patch actually test the bug b
 
 **Only run this phase if the patch adds new gtest test cases.**
 
-2a. Check whether the patches are already applied to the working tree:
+2a. Determine the state of the working tree:
+
+**Worktree mode** — patches are already committed; the working tree should be clean.
+To test unfixed code, temporarily check out the base commit, then restore:
 ```sh
-cd "$NSS_DIR"
-git status
+PATCHED_HEAD=$(git -C "$NSS_DIR" rev-parse HEAD)
+git -C "$NSS_DIR" checkout "$BASE"
+# → proceed to step 2b
+# After testing, restore with: git -C "$NSS_DIR" checkout $PATCHED_HEAD
 ```
 
-**If patches are NOT yet applied** (clean working tree): proceed to step 2b — build the clean baseline directly.
-
-**If patches ARE already applied** (working tree is dirty): stash all changes, then apply only the test-addition patch(es) — i.e. the patch file(s) that only add new test cases without modifying production code. This lets you run the new tests against the unfixed code.
+**Bug-number mode** — check whether patches are already applied:
 ```sh
-git stash
-git apply /path/to/test-only-patch.diff
+git -C "$NSS_DIR" status
 ```
-Then proceed to step 2b.
+- **Clean working tree**: proceed to step 2b directly.
+- **Dirty working tree** (patches already applied): stash all changes, then apply only the test-addition patch(es) — i.e. the patch file(s) that only add new test cases without modifying production code:
+  ```sh
+  git -C "$NSS_DIR" stash
+  git -C "$NSS_DIR" apply /path/to/test-only-patch.diff
+  ```
 
 2b. Build NSS (standard build):
 ```sh
@@ -100,8 +165,7 @@ NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh 2>&1 | tail -20
 
 2c. Extract new test names programmatically from the patch diff, then run them in a single invocation:
 ```sh
-# Extract new TEST/TEST_F/TEST_P names from the patch as a GTESTFILTER
-GTESTFILTER=$(grep -E '^\+\s*TEST(_F|_P)?\(' /path/to/patch.diff \
+GTESTFILTER=$(grep -E '^\+\s*TEST(_F|_P)?\(' "$PATCH_FILE" \
   | sed -E 's/.*TEST(_F|_P)?\(([^,]+),\s*([^)]+)\).*/\2.\3/' \
   | paste -sd ':')
 echo "GTESTFILTER=$GTESTFILTER"
@@ -110,10 +174,13 @@ cd "$NSS_DIR/tests"
 HOST=localhost DOMSUF=localdomain USE_64=1 DIST="$NSS_DIST_DIR" \
   GTESTFILTER="$GTESTFILTER" bash ssl_gtests/ssl_gtests.sh 2>&1 \
   | tee /tmp/pre-patch-run.log | tail -15
-# Show any gtest-level failures in one pass — no need to re-run
 grep -E "^\[  FAILED  \]|: Failure$|Expected|Which is:" /tmp/pre-patch-run.log | head -30
 ```
 For other gtest suites, use the appropriate script under `$NSS_DIR/tests/`.
+
+After testing, restore the patched state:
+- **Worktree mode**: `git -C "$NSS_DIR" checkout $PATCHED_HEAD`
+- **Bug-number mode** (stashed): `git -C "$NSS_DIR" stash pop`
 
 **Expected outcome**: New test cases should FAIL here (they test the bug being fixed). Only report detail if tests unexpectedly pass. If they fail as expected, say "New tests fail on unfixed code as expected."
 
@@ -121,18 +188,26 @@ For other gtest suites, use the appropriate script under `$NSS_DIR/tests/`.
 
 ## Phase 3: Apply the Patch
 
-**If the working tree is clean** (patches not yet applied, or just stashed in Phase 2):
+**Worktree mode** — patches are already committed; nothing to apply. Confirm:
+```sh
+git -C "$NSS_DIR" log --oneline "$BASE"..HEAD
+```
+Record the commit summary and move on.
+
+**Bug-number mode:**
+
+If the working tree is clean (patches not yet applied, or just restored from stash in Phase 2):
 ```sh
 cd "$NSS_DIR"
-git apply --check /path/to/patch   # dry run first
-git apply /path/to/patch
+git apply --check "$PATCH_FILE"   # dry run first
+git apply "$PATCH_FILE"
 ```
 
-**If Phase 2 stashed the original changes**: restore the full set of patches via `git stash pop` instead of re-applying manually.
+If Phase 2 stashed the original changes: restore the full set of patches via `git stash pop` instead of re-applying manually.
 
-**If there are multiple patch files**: apply them in dependency order (fix patch first, then additional test patches, or combined if independent).
+If there are multiple patch files in bug-number mode: apply them in dependency order (fix patch first, then additional test patches, or combined if independent).
 
-If `git apply` fails, try `patch -p1 < /path/to/patch`. Record any apply errors or conflicts.
+If `git apply` fails, try `patch -p1 < "$PATCH_FILE"`. Record any apply errors or conflicts.
 
 ---
 
@@ -140,10 +215,17 @@ If `git apply` fails, try `patch -p1 < /path/to/patch`. Record any apply errors 
 
 Check that all modified C/C++ source files in the patch conform to NSS formatting rules. Run `clang-format --dry-run --Werror` on only the files changed by the patch. This avoids modifying the working tree and cleanly separates patch violations from pre-existing ones.
 
+**Worktree mode** — diff is between commits, so use the base..HEAD range:
 ```sh
 cd "$NSS_DIR"
+git diff "$BASE"..HEAD --name-only -- '*.c' '*.cc' '*.cpp' '*.h' | while read -r f; do
+  clang-format --dry-run --Werror "$f" 2>&1
+done
+```
 
-# Dry-run clang-format per file — avoids path issues with word-split lists
+**Bug-number mode** — diff is in the working tree:
+```sh
+cd "$NSS_DIR"
 git diff --name-only -- '*.c' '*.cc' '*.cpp' '*.h' | while read -r f; do
   clang-format --dry-run --Werror "$f" 2>&1
 done
@@ -168,9 +250,8 @@ If the build succeeds cleanly, say "Build OK." Only show output on failure or wa
 
 **Run relevant tests** (reuse the `GTESTFILTER` extracted in Phase 2, or extract it now if Phase 2 was skipped):
 ```sh
-# Extract GTESTFILTER if not already set from Phase 2
 if [ -z "$GTESTFILTER" ]; then
-  GTESTFILTER=$(grep -E '^\+\s*TEST(_F|_P)?\(' /path/to/patch.diff \
+  GTESTFILTER=$(grep -E '^\+\s*TEST(_F|_P)?\(' "$PATCH_FILE" \
     | sed -E 's/.*TEST(_F|_P)?\(([^,]+),\s*([^)]+)\).*/\2.\3/' \
     | paste -sd ':')
 fi
@@ -226,12 +307,10 @@ echo "LCOV: $LCOV_FILE"
 
 **Use diff-cover to focus on lines changed by the patch:**
 ```sh
-# Combine all patch files into one diff
-cat /workspaces/nss-dev/bugs/$BUGNUM/attachments/*.diff > /tmp/review-$BUGNUM.diff
-
+mkdir -p /workspaces/nss-dev/bugs/$BUGNUM
 COVERAGE_REPORT=/workspaces/nss-dev/bugs/$BUGNUM/coverage-report.html
 diff-cover "$LCOV_FILE" \
-  --diff-file /tmp/review-$BUGNUM.diff \
+  --diff-file "$PATCH_FILE" \
   --html-report "$COVERAGE_REPORT" \
   2>&1
 echo "Coverage report: $COVERAGE_REPORT"
@@ -253,7 +332,10 @@ date -u +%s
 ```
 Calculate elapsed wall-clock time from the start time recorded before Phase 0.
 
-Write the report to `/workspaces/nss-dev/bugs/<BUGNUM>/review.md` so it persists alongside the bug data.
+Write the report to `/workspaces/nss-dev/bugs/$BUGNUM/review.md`. Create the directory if it does not exist:
+```sh
+mkdir -p /workspaces/nss-dev/bugs/$BUGNUM
+```
 
 Report format:
 
@@ -262,6 +344,7 @@ Report format:
 
 **Patch**: [1-2 sentence description]
 **Files**: [list of changed files]
+**Mode**: [worktree: <name> / bug attachments]
 **Verdict**: [APPROVE / NEEDS WORK / NEEDS DISCUSSION]
 
 ## Results
@@ -292,10 +375,12 @@ Report format:
 
 After writing the report, print:
 1. The path to the saved report file.
-2. The cleanup commands:
+2. Cleanup commands — only for **bug-number mode** where a fresh review worktree was created:
 
 ```sh
-# To remove the review worktree and its build artefacts when done:
+# Bug-number mode only — remove the review worktree and its build artefacts:
 git -C /workspaces/nss-dev/nss worktree remove "$WORKTREE_DIR"
 rm -rf "$NSS_DIST_DIR"
 ```
+
+In worktree mode the user owns the worktree; do not suggest removing it.
