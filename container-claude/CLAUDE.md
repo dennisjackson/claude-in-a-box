@@ -15,6 +15,16 @@ cd /workspaces/nss-dev/nss
 ```
 NSS uses gyp + ninja (not CMake). The `build.sh` script handles everything including building NSPR.
 
+### Parallel / isolated builds
+Set `NSS_DIST_DIR` to use a non-default output directory (useful for working on multiple branches simultaneously):
+```sh
+NSS_DIST_DIR=/workspaces/nss-dev/dist-mybranch ./build.sh
+```
+Pass the matching `DIST` when running tests:
+```sh
+DIST=/workspaces/nss-dev/dist-mybranch HOST=localhost DOMSUF=localdomain USE_64=1 bash ssl_gtests/ssl_gtests.sh
+```
+
 ### Useful build flags
 - `./build.sh -c` — clean build
 - `./build.sh -g -v` — debug build, verbose

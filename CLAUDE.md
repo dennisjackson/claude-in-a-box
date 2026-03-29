@@ -19,6 +19,7 @@ build environment it can explore and modify freely without affecting the host.
 - `host-tools/setup-envrc.sh` — interactively populate `.envrc` with API keys (`ANTHROPIC_API_KEY`, `BUGZILLA_API_KEY`, `PHABRICATOR_API_TOKEN`).
 - `host-tools/connect.sh` — exec into a running dev container.
 - `host-tools/fresh-container.sh` — tear down and rebuild the dev container, then connect.
+- `host-tools/status.sh` — report container state, persistent volumes, build artifacts, bind mounts, and environment config. Highlights state that survives container rebuilds.
 
 ## Workflow
 

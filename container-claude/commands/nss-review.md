@@ -1,7 +1,7 @@
 ---
 name: nss-review
 description: Review an NSS/NSPR bug patch. Use when the user says "/nss-review BUGNUM", "review bug XXXXX", "review patch for bug", or similar. Performs full patch validation including test verification, sanitizer builds, fuzzing, and coverage analysis.
-version: 1.0.0
+version: 1.3.0
 disable-model-invocation: true
 ---
 
@@ -15,14 +15,42 @@ Follow each phase below in order. Record the outcome of every step — both pass
 
 ## Phase 0: Locate the Diff
 
-**Determine the bug number.** If `$ARGUMENTS` is empty, find the latest bug folder under `/workspaces/nss-dev/bugs/` by listing subdirectories sorted by name and taking the last one. Use that folder's name as the bug number for the rest of this review.
+### 0a. Determine the bug number
 
-Search for the patch file. Check these locations in order:
-1. `/workspaces/nss-dev/bugs/<BUGNUM>/attachments/` — list all `.diff` and `.patch` files here; if multiple exist, review all of them
-2. `/tmp/bug<BUGNUM>.diff`, `/tmp/bug-<BUGNUM>.diff`, `/tmp/bug<BUGNUM>.patch`
-3. `~/Downloads/bug<BUGNUM>.diff`, `~/Downloads/bug<BUGNUM>.patch`
-4. Any `.diff` or `.patch` file in `/tmp/` or `~/Downloads/` whose name contains `<BUGNUM>`
-5. The current working directory for any `.diff` or `.patch` file
+If `$ARGUMENTS` is non-empty, use it as the bug number. Otherwise, find the latest bug folder under `/workspaces/nss-dev/bugs/` by listing subdirectories sorted by name and taking the last one. Use that folder's name as the bug number for the rest of this review.
+
+### 0b. Set up a dedicated review worktree
+
+Create an isolated git worktree for this review so that applying patches, building, and running tests does not touch the main checkout. The worktree is a detached HEAD at the current tip of the main tree.
+
+```sh
+BUGNUM=<bug number from 0a>
+WORKTREE_DIR=/workspaces/nss-dev/worktrees/review-$BUGNUM
+NSS_DIST_DIR=/workspaces/nss-dev/dist-review-$BUGNUM
+
+if git -C /workspaces/nss-dev/nss worktree list --porcelain \
+     | grep -qF "worktree $WORKTREE_DIR"; then
+  echo "Reusing existing worktree: $WORKTREE_DIR"
+else
+  echo "Creating worktree: $WORKTREE_DIR"
+  mkdir -p /workspaces/nss-dev/worktrees
+  git -C /workspaces/nss-dev/nss worktree add --detach "$WORKTREE_DIR"
+fi
+
+NSS_DIR=$WORKTREE_DIR
+
+# Ensure the worktree can find NSPR (build.sh resolves $cwd/../nspr)
+ln -sfn /workspaces/nss-dev/nspr /workspaces/nss-dev/worktrees/nspr
+
+echo "NSS_DIR:      $NSS_DIR"
+echo "NSS_DIST_DIR: $NSS_DIST_DIR"
+```
+
+All subsequent phases use `$NSS_DIR` and `$NSS_DIST_DIR`. The main checkout at `/workspaces/nss-dev/nss` and its dist at `/workspaces/nss-dev/dist` are never touched.
+
+### 0c. Find the patch
+
+Search for the patch file in `/workspaces/nss-dev/bugs/<BUGNUM>/attachments/` — list all `.diff` and `.patch` files there. If multiple exist, review all of them.
 
 If no diff is found, stop and ask the user where the patch file is located.
 
@@ -36,7 +64,7 @@ Read the full diff. Identify and record:
 - **Files changed**: List all modified source files with a brief note on what changed in each
 - **Test files**: List any new or modified test files (paths containing `gtest`, `_test`, `tests/`)
 - **Code areas touched**: Which NSS subsystems are affected? (TLS/SSL, PKI/cert, crypto, PKCS11, PKCS12, etc.)
-- **Fuzz-relevant**: Are any of the changed areas covered by fuzzers in `nss/fuzz/targets/`? Map changed code to relevant fuzzer targets.
+- **Fuzz-relevant**: Are any of the changed areas covered by fuzzers in `$NSS_DIR/fuzz/targets/`? Map changed code to relevant fuzzer targets.
 - **Coverage strategy**: Which gtest suites and test shell scripts are most relevant to the changed code?
 
 ---
@@ -47,26 +75,40 @@ This phase verifies that any new test cases in the patch actually test the bug b
 
 **Only run this phase if the patch adds new gtest test cases.**
 
-2a. Ensure the repo is on a clean baseline (no patch applied):
+2a. Check whether the patches are already applied to the working tree:
 ```sh
-cd /workspaces/nss-dev/nss
-git stash list   # just to check state; do not discard anything
+cd "$NSS_DIR"
 git status
 ```
 
+**If patches are NOT yet applied** (clean working tree): proceed to step 2b — build the clean baseline directly.
+
+**If patches ARE already applied** (working tree is dirty): stash all changes, then apply only the test-addition patch(es) — i.e. the patch file(s) that only add new test cases without modifying production code. This lets you run the new tests against the unfixed code.
+```sh
+git stash
+git apply /path/to/test-only-patch.diff
+```
+Then proceed to step 2b.
+
 2b. Build NSS (standard build):
 ```sh
-cd /workspaces/nss-dev/nss
-./build.sh 2>&1 | tail -20
+cd "$NSS_DIR"
+NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh 2>&1 | tail -20
 ```
 
-2c. For each new gtest test case identified in Phase 1, run it using the appropriate test script with `GTESTFILTER`. Use the pattern from CLAUDE.md — for ssl_gtest:
+2c. Extract new test names programmatically from the patch diff, then run them in a single invocation:
 ```sh
-cd /workspaces/nss-dev/nss/tests
-HOST=localhost DOMSUF=localdomain USE_64=1 DIST=/workspaces/nss-dev/dist \
-  GTESTFILTER="TestSuiteName.TestCaseName" bash ssl_gtests/ssl_gtests.sh
+# Extract new TEST/TEST_F/TEST_P names from the patch as a GTESTFILTER
+GTESTFILTER=$(grep -E '^\+\s*TEST(_F|_P)?\(' /path/to/patch.diff \
+  | sed -E 's/.*TEST(_F|_P)?\(([^,]+),\s*([^)]+)\).*/\2.\3/' \
+  | paste -sd ':')
+echo "GTESTFILTER=$GTESTFILTER"
+
+cd "$NSS_DIR/tests"
+HOST=localhost DOMSUF=localdomain USE_64=1 DIST="$NSS_DIST_DIR" \
+  GTESTFILTER="$GTESTFILTER" bash ssl_gtests/ssl_gtests.sh
 ```
-For other gtest suites, use the appropriate script under `nss/tests/`.
+For other gtest suites, use the appropriate script under `$NSS_DIR/tests/`.
 
 **Expected outcome**: New test cases should FAIL here (they test the bug being fixed). Record whether each test case failed as expected or unexpectedly passed.
 
@@ -74,11 +116,16 @@ For other gtest suites, use the appropriate script under `nss/tests/`.
 
 ## Phase 3: Apply the Patch
 
+**If the working tree is clean** (patches not yet applied, or just stashed in Phase 2):
 ```sh
-cd /workspaces/nss-dev/nss
+cd "$NSS_DIR"
 git apply --check /path/to/patch   # dry run first
 git apply /path/to/patch
 ```
+
+**If Phase 2 stashed the original changes**: restore the full set of patches via `git stash pop` instead of re-applying manually.
+
+**If there are multiple patch files**: apply them in dependency order (fix patch first, then additional test patches, or combined if independent).
 
 If `git apply` fails, try `patch -p1 < /path/to/patch`. Record any apply errors or conflicts.
 
@@ -86,21 +133,19 @@ If `git apply` fails, try `patch -p1 < /path/to/patch`. Record any apply errors 
 
 ## Phase 4: clang-format Check
 
-Check that all modified C/C++ source files in the patch conform to NSS formatting rules. Run the project's own format script against the directories containing changed files, then inspect the diff.
+Check that all modified C/C++ source files in the patch conform to NSS formatting rules. Run `clang-format --dry-run --Werror` on only the files changed by the patch. This avoids modifying the working tree and cleanly separates patch violations from pre-existing ones.
 
 ```sh
-cd /workspaces/nss-dev/nss
+cd "$NSS_DIR"
 
-# Run clang-format in-place on the directories that contain changed files,
-# then use git diff to see any formatting violations.
-bash automation/clang-format/run_clang_format.sh <dir1> [dir2 ...]
+# Get the list of C/C++ files changed by the patch
+CHANGED=$(git diff --name-only -- '*.c' '*.cc' '*.cpp' '*.h')
+
+# Dry-run clang-format — reports violations without modifying files
+clang-format --dry-run --Werror $CHANGED 2>&1
 ```
 
-The script exits non-zero and prints the diff if any file needed reformatting. Record any violations (file name + line range is sufficient). Then restore the tree to a clean state before building:
-
-```sh
-git restore .
-```
+If `clang-format` exits non-zero, it prints the reformatting warnings. Record any violations (file name + line range is sufficient). No `git restore` is needed since `--dry-run` does not modify files.
 
 ---
 
@@ -108,122 +153,84 @@ git restore .
 
 UBSan and ASan can be enabled together in a single build. Build once, run the relevant tests once, and record results for both sanitizers.
 
-The relevant tests are those identified in Phase 1; for ssl_gtest use a `GTESTFILTER`, for other suites use the appropriate script under `nss/tests/`.
+The relevant tests are those identified in Phase 1; for ssl_gtest use a `GTESTFILTER`, for other suites use the appropriate script under `$NSS_DIR/tests/`.
 
 **Build with both sanitizers:**
 ```sh
-cd /workspaces/nss-dev/nss
-./build.sh -c --ubsan --asan 2>&1 | tail -30
+cd "$NSS_DIR"
+NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh -c --ubsan --asan 2>&1 | tail -30
 ```
 Record: build success/failure, any warnings in changed files.
 
-**Run relevant tests:**
+**Run relevant tests** (reuse the `GTESTFILTER` extracted in Phase 2, or extract it now if Phase 2 was skipped):
+```sh
+# Extract GTESTFILTER if not already set from Phase 2
+if [ -z "$GTESTFILTER" ]; then
+  GTESTFILTER=$(grep -E '^\+\s*TEST(_F|_P)?\(' /path/to/patch.diff \
+    | sed -E 's/.*TEST(_F|_P)?\(([^,]+),\s*([^)]+)\).*/\2.\3/' \
+    | paste -sd ':')
+fi
+
+cd "$NSS_DIR/tests"
+HOST=localhost DOMSUF=localdomain USE_64=1 DIST="$NSS_DIST_DIR" \
+  GTESTFILTER="$GTESTFILTER" bash ssl_gtests/ssl_gtests.sh
+```
 
 Expected: all tests pass, including any new test cases that failed in Phase 2. Record any UBSan errors (undefined behaviour reports) and ASan errors (heap/stack overflow, use-after-free, etc.) that appear in the test output.
 
-After testing, restore a clean standard build for the remaining phases:
-```sh
-./build.sh -c 2>&1 | tail -20
-```
-
 ---
 
-## Phase 6: ABI Check
-
-Check that the patch does not introduce unexpected ABI changes in the NSS shared libraries.
-
-This phase requires `abidiff` (from the `abigail-tools` package). Check availability first:
-```sh
-which abidiff || echo "abidiff not found — install with: sudo apt-get install -y abigail-tools"
-```
-If unavailable and cannot be installed, skip this phase and note it in the summary.
-
-**Step 1 — Save patched build artefacts.**
-The standard build from Phase 5 is the "new" dist. Copy the shared libraries to a temporary location:
-```sh
-mkdir -p /tmp/nss-abi-new
-cp /workspaces/nss-dev/dist/*/lib/lib*.so /tmp/nss-abi-new/
-cp -r /workspaces/nss-dev/dist/public /tmp/nss-abi-new/
-```
-
-**Step 2 — Build the baseline.**
-Temporarily remove the patch, build, save artefacts, then reapply:
-```sh
-cd /workspaces/nss-dev/nss
-git stash          # remove patch temporarily
-./build.sh -c 2>&1 | tail -20
-mkdir -p /tmp/nss-abi-old
-cp /workspaces/nss-dev/dist/*/lib/lib*.so /tmp/nss-abi-old/
-cp -r /workspaces/nss-dev/dist/public /tmp/nss-abi-old/
-git stash pop      # restore patch
-./build.sh -c 2>&1 | tail -10   # restore patched dist
-```
-
-**Step 3 — Run abidiff for each shared library and compare against expected reports.**
-The expected reports live in `nss/automation/abi-check/expected-report-<SO>.txt`. Any difference not already listed there is a new unexpected ABI change.
-
-```sh
-ALL_SOs="libfreebl3.so libfreeblpriv3.so libnspr4.so libnss3.so libnssckbi.so libnsssysinit.so libnssutil3.so libplc4.so libplds4.so libsmime3.so libsoftokn3.so libssl3.so"
-for SO in $ALL_SOs; do
-  [ -f /tmp/nss-abi-old/$SO ] || continue
-  abidiff --hd1 /tmp/nss-abi-new/public --hd2 /tmp/nss-abi-new/public \
-          /tmp/nss-abi-old/$SO /tmp/nss-abi-new/$SO \
-    | grep -v "^Functions changes summary:" \
-    | grep -v "^Variables changes summary:" \
-    | sed 's/__anonymous_enum__[0-9]*/__anonymous_enum__/g' \
-    > /tmp/nss-abi-report-$SO.txt
-  diff -wB /workspaces/nss-dev/nss/automation/abi-check/expected-report-$SO.txt \
-           /tmp/nss-abi-report-$SO.txt \
-    && echo "$SO: OK" || echo "$SO: UNEXPECTED ABI CHANGES — see /tmp/nss-abi-report-$SO.txt"
-done
-```
-
-Record: which libraries (if any) showed unexpected ABI changes, and a brief description of what changed.
-
----
-
-## Phase 7: Fuzzing (Brief)
+## Phase 6: Fuzzing (Brief)
 
 Only run fuzzers identified as relevant in Phase 1. Skip this phase if no relevant fuzzers were identified.
 
-Build with fuzzing support:
+Build with fuzzing support. For TLS/DTLS client and server fuzzers, use `--fuzz=tls` (Totally Lacking Security mode); for all other targets, use `--fuzz`:
 ```sh
-cd /workspaces/nss-dev/nss
-./build.sh --fuzz --disable-tests 2>&1 | tail -20
+cd "$NSS_DIR"
+NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh --fuzz=tls --disable-tests 2>&1 | tail -20
 ```
 
-The fuzz binary is at `../dist/bin/nssfuzz` or similar. For each relevant fuzzer target, run for 30 seconds:
+Fuzz binaries are named `nssfuzz-<target>` under `$NSS_DIST_DIR/Debug/bin/`. List available targets first if unsure:
 ```sh
-FUZZER_TARGET=<target>   # e.g. tls_client, tls_server, asn1, quickder, pkcs12
-../dist/bin/nssfuzz $FUZZER_TARGET -max_total_time=30 -artifact_prefix=/tmp/fuzz-$FUZZER_TARGET- 2>&1 | tail -10
+ls "$NSS_DIST_DIR/Debug/bin/nssfuzz-"*
+```
+
+For each relevant fuzzer target, run for 30 seconds:
+```sh
+TARGET=tls-client   # e.g. tls-client, tls-server, dtls-client, dtls-server, ech
+"$NSS_DIST_DIR/Debug/bin/nssfuzz-$TARGET" \
+  -max_total_time=30 -artifact_prefix=/tmp/fuzz-$TARGET- 2>&1 | tail -10
 ```
 
 Record: any crashes or timeouts found. Note the exec/s rate as a sanity check that the fuzzer is running.
 
 ---
 
-## Phase 8: Coverage Check
+## Phase 7: Coverage Check
 
-Build with coverage instrumentation and run the relevant tests to check that the new/changed code paths are exercised.
+Use `./mach test-coverage` for unit-test line coverage and `./mach fuzz-coverage` for fuzzer coverage. Do not attempt to pass coverage flags directly to `build.sh` — that approach does not work.
 
+**For unit test coverage** (run relevant test suites only using `--test`):
 ```sh
-cd /workspaces/nss-dev/nss
-./build.sh --clang --coverage 2>&1 | tail -20
+cd "$NSS_DIR"
+./mach test-coverage --test ssl_gtests
 ```
 
-Run the relevant tests, then generate a coverage report focused on the changed files:
+**For fuzz coverage** (limit to relevant fuzzer targets using `--targets`):
 ```sh
-cd /workspaces/nss-dev/nss/tests
-HOST=localhost DOMSUF=localdomain USE_64=1 DIST=/workspaces/nss-dev/dist bash ssl_gtests/ssl_gtests.sh
+cd "$NSS_DIR"
+./mach fuzz-coverage --targets tls-client,tls-server --max-total-time=30
 ```
 
-Use `llvm-cov` or `lcov` to get line coverage for the specific files changed in the patch. Report percentage coverage and any uncovered lines that seem like they should be tested.
+Both commands produce an HTML report and a summary. Focus the coverage assessment on the specific files changed in the patch. Report percentage coverage and any uncovered lines in changed code that seem like they should be tested.
+
+If coverage tools are unavailable or the build fails, note it and skip.
 
 ---
 
-## Phase 9: Review Summary
+## Phase 8: Review Summary
 
-Produce a structured review report covering all phases:
+Produce a structured review report covering all phases, followed by a worktree cleanup note:
 
 ```
 ## NSS Bug $ARGUMENTS — Patch Review
@@ -235,7 +242,7 @@ Produce a structured review report covering all phases:
 [List of files and brief description of changes]
 
 ### clang-format (Phase 4)
-- [CLEAN / violations found: ...]
+- [CLEAN / violations found in new code: ...]
 
 ### Test Verification
 - Pre-patch (Phase 2): [new tests FAIL as expected / not applicable / UNEXPECTED PASS]
@@ -244,14 +251,11 @@ Produce a structured review report covering all phases:
 ### Sanitizer Results
 - UBSan + ASan (Phase 5): [CLEAN / issues found: ...]
 
-### ABI Check (Phase 6)
-- [CLEAN / skipped (abidiff unavailable) / unexpected changes: ...]
-
-### Fuzzing (Phase 7)
+### Fuzzing (Phase 6)
 - Fuzzers run: [list or "N/A"]
 - Crashes found: [none / list]
 
-### Coverage (Phase 8)
+### Coverage (Phase 7)
 - Changed files coverage: [X% / not measured]
 - Uncovered lines of concern: [none / list]
 
@@ -263,4 +267,12 @@ Produce a structured review report covering all phases:
 
 ### Recommendations
 [Numbered list of any issues that should be addressed before landing]
+```
+
+After delivering the report, print the cleanup commands so the user can remove the worktree and dist when they're done:
+
+```sh
+# To remove the review worktree and its build artefacts when done:
+git -C /workspaces/nss-dev/nss worktree remove "$WORKTREE_DIR"
+rm -rf "$NSS_DIST_DIR"
 ```

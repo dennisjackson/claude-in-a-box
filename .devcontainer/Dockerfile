@@ -13,9 +13,10 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && apt-get -y install --no-install-recommends \
         clang-18 clang-format-18 clang-tidy-18 clang-tools-18 \
         lld-18 lldb-18 libclang-rt-18-dev libfuzzer-18-dev \
+        llvm-18 \
     && for tool in clang clang++ clang-format clang-tidy clang-cpp lld lldb \
                    asan_symbolize llvm-symbolizer llvm-ar llvm-nm llvm-objdump \
-                   llvm-ranlib llvm-strip; do \
+                   llvm-ranlib llvm-strip llvm-profdata llvm-cov; do \
         ln -sf "/usr/bin/${tool}-18" "/usr/local/bin/${tool}"; \
     done \
     && apt-get autoremove -y && apt-get clean -y \
@@ -62,6 +63,7 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && rm -rf /var/lib/apt/lists/*
 
 ENV CCACHE_DIR=/workspaces/nss-dev/.ccache \
+    CCACHE_BASEDIR=/workspaces/nss-dev \
     CCACHE_MAXSIZE=5G \
     CCACHE_COMPRESS=1 \
     CC="ccache clang" \
