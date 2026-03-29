@@ -36,6 +36,7 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
         # NSS-specific dependencies
         python3 \
         python3-distutils \
+        pipx \
         zlib1g-dev \
         libsqlite3-dev \
         # Mercurial (needed by git-cinnabar)
@@ -52,6 +53,9 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
         curl \
     && apt-get autoremove -y && apt-get clean -y \
         && rm -rf /var/lib/apt/lists/*
+
+# diff-cover — show coverage diff between branches
+RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install diff-cover
 
 # ccache — dramatically speeds up rebuilds by caching object files.
 # The cache directory is backed by a named volume so it survives container

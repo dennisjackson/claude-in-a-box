@@ -6,6 +6,8 @@ This is a dev container for working on Mozilla NSS (Network Security Services) a
 ## Directory Layout
 - `/workspaces/nss-dev/nss/` — NSS source (git-cinnabar clone from hg.mozilla.org)
 - `/workspaces/nss-dev/nspr/` — NSPR source (git-cinnabar clone from hg.mozilla.org)
+- `/workspaces/nss-dev/bugs/` — Bug context fetched from Bugzilla (markdown summaries, attachments, patches). Each bug lives in `bugs/bug-<id>/` with patches in `attachments/`.
+- `/workspaces/nss-dev/dist/` — Default build output directory
 - `/workspaces/config/` — Dev container configuration (do not modify from inside the container)
 
 ## Building NSS
@@ -32,8 +34,21 @@ DIST=/workspaces/nss-dev/dist-mybranch HOST=localhost DOMSUF=localdomain USE_64=
 - `./build.sh --fuzz=tls --disable-tests` — fuzz build in Totally Lacking Security mode (required for TLS/DTLS client/server fuzzers)
 - `./build.sh --asan` — build with AddressSanitizer
 - `./build.sh --ubsan` — build with UndefinedBehaviorSanitizer
+- `./build.sh --ubsan --asan` — combine sanitizers in a single build (both work together)
 
 Build output goes to `../dist/`.
+
+### Worktrees for isolated work
+Use git worktrees to work on patches without touching the main checkout:
+```sh
+git -C /workspaces/nss-dev/nss worktree add --detach /workspaces/nss-dev/worktrees/my-work
+# Ensure NSPR is findable (build.sh resolves $cwd/../nspr)
+ln -sfn /workspaces/nss-dev/nspr /workspaces/nss-dev/worktrees/nspr
+# Build in the worktree with a separate dist
+cd /workspaces/nss-dev/worktrees/my-work
+NSS_DIST_DIR=/workspaces/nss-dev/dist-my-work ./build.sh
+```
+Clean up when done: `git -C /workspaces/nss-dev/nss worktree remove /workspaces/nss-dev/worktrees/my-work`
 
 ## Source Control
 Repos are cloned via git-cinnabar. Use standard git commands — cinnabar translates to/from Mercurial transparently.
@@ -47,6 +62,7 @@ Repos are cloned via git-cinnabar. Use standard git commands — cinnabar transl
 - **clang-tidy, clang-format, cppcheck** — static analysis and formatting
 - **bear** — generate `compile_commands.json` for IDE integration: `bear -- ./build.sh`
 - **lcov** — code coverage
+- **diff-cover** — coverage focused on lines changed by a patch/diff
 
 ## Running Tests
 
@@ -72,6 +88,36 @@ HOST=localhost DOMSUF=localdomain USE_64=1 DIST=/workspaces/nss-dev/dist GTESTFI
 
 ### Other individual test scripts
 Each test has its own script under `nss/tests/` (e.g. `ssl/ssl.sh`, `cert/cert.sh`). They all require `HOST` and `DOMSUF` to be set.
+
+### Code coverage
+Use `./mach test-coverage` for line coverage — do **not** pass coverage flags directly to `build.sh` (it does not work).
+```sh
+cd /workspaces/nss-dev/nss
+./mach test-coverage --test ssl_gtests 2>&1 | tee /tmp/coverage.log
+# Extract the LCOV file path from output
+grep "Coverage LCOV data:" /tmp/coverage.log
+```
+To see coverage for only the lines changed by a patch, use `diff-cover`:
+```sh
+diff-cover <lcov-file> --diff-file <patch.diff> --html-report report.html
+```
+
+### Fuzzing
+Fuzz binaries are named `nssfuzz-<target>` under `$DIST/Debug/bin/`. List available targets:
+```sh
+ls /workspaces/nss-dev/dist/Debug/bin/nssfuzz-*
+```
+Run a target (e.g. for 30 seconds):
+```sh
+/workspaces/nss-dev/dist/Debug/bin/nssfuzz-tls-client -max_total_time=30
+```
+Common targets: `tls-client`, `tls-server`, `dtls-client`, `dtls-server`, `ech`. TLS/DTLS fuzzers require `--fuzz=tls` builds; other targets use `--fuzz`.
+
+## Formatting
+Check C/C++ files without modifying them:
+```sh
+clang-format --dry-run --Werror path/to/file.c
+```
 
 ## NSS Code Conventions
 - C11 / C++17

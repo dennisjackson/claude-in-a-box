@@ -9,7 +9,12 @@ disable-model-invocation: true
 
 Review bug: $ARGUMENTS
 
-Follow each phase below in order. Record the outcome of every step — both pass and fail — for the final summary.
+Follow each phase below in order. Be terse: if a phase completes without issues, just record "No issues" and move on. Only provide detail when something fails, looks suspicious, or needs the user's attention.
+
+**Before starting**, record the wall-clock start time:
+```sh
+date -u +%s
+```
 
 ---
 
@@ -28,13 +33,17 @@ BUGNUM=<bug number from 0a>
 WORKTREE_DIR=/workspaces/nss-dev/worktrees/review-$BUGNUM
 NSS_DIST_DIR=/workspaces/nss-dev/dist-review-$BUGNUM
 
-if git -C /workspaces/nss-dev/nss worktree list --porcelain \
-     | grep -qF "worktree $WORKTREE_DIR"; then
+# Always create the parent dir first so the nspr symlink can be placed there.
+mkdir -p /workspaces/nss-dev/worktrees
+
+if [ -d "$WORKTREE_DIR" ]; then
   echo "Reusing existing worktree: $WORKTREE_DIR"
 else
   echo "Creating worktree: $WORKTREE_DIR"
-  mkdir -p /workspaces/nss-dev/worktrees
-  git -C /workspaces/nss-dev/nss worktree add --detach "$WORKTREE_DIR"
+  # A stale registry entry (no live directory) may exist from a previous run.
+  # --force lets git overwrite it without touching any other active worktrees.
+  git -C /workspaces/nss-dev/nss worktree add --detach "$WORKTREE_DIR" \
+    || git -C /workspaces/nss-dev/nss worktree add --force --detach "$WORKTREE_DIR"
 fi
 
 NSS_DIR=$WORKTREE_DIR
@@ -58,14 +67,7 @@ If no diff is found, stop and ask the user where the patch file is located.
 
 ## Phase 1: Patch Analysis
 
-Read the full diff. Identify and record:
-
-- **Summary**: What does this patch do? What bug is it fixing?
-- **Files changed**: List all modified source files with a brief note on what changed in each
-- **Test files**: List any new or modified test files (paths containing `gtest`, `_test`, `tests/`)
-- **Code areas touched**: Which NSS subsystems are affected? (TLS/SSL, PKI/cert, crypto, PKCS11, PKCS12, etc.)
-- **Fuzz-relevant**: Are any of the changed areas covered by fuzzers in `$NSS_DIR/fuzz/targets/`? Map changed code to relevant fuzzer targets.
-- **Coverage strategy**: Which gtest suites and test shell scripts are most relevant to the changed code?
+Read the full diff. Internally note the files changed, subsystems affected, relevant fuzzers and test suites — you need these to drive later phases. Only output a 1-2 sentence summary of what the patch does. Save detailed file lists for the final report.
 
 ---
 
@@ -106,11 +108,14 @@ echo "GTESTFILTER=$GTESTFILTER"
 
 cd "$NSS_DIR/tests"
 HOST=localhost DOMSUF=localdomain USE_64=1 DIST="$NSS_DIST_DIR" \
-  GTESTFILTER="$GTESTFILTER" bash ssl_gtests/ssl_gtests.sh
+  GTESTFILTER="$GTESTFILTER" bash ssl_gtests/ssl_gtests.sh 2>&1 \
+  | tee /tmp/pre-patch-run.log | tail -15
+# Show any gtest-level failures in one pass — no need to re-run
+grep -E "^\[  FAILED  \]|: Failure$|Expected|Which is:" /tmp/pre-patch-run.log | head -30
 ```
 For other gtest suites, use the appropriate script under `$NSS_DIR/tests/`.
 
-**Expected outcome**: New test cases should FAIL here (they test the bug being fixed). Record whether each test case failed as expected or unexpectedly passed.
+**Expected outcome**: New test cases should FAIL here (they test the bug being fixed). Only report detail if tests unexpectedly pass. If they fail as expected, say "New tests fail on unfixed code as expected."
 
 ---
 
@@ -138,14 +143,13 @@ Check that all modified C/C++ source files in the patch conform to NSS formattin
 ```sh
 cd "$NSS_DIR"
 
-# Get the list of C/C++ files changed by the patch
-CHANGED=$(git diff --name-only -- '*.c' '*.cc' '*.cpp' '*.h')
-
-# Dry-run clang-format — reports violations without modifying files
-clang-format --dry-run --Werror $CHANGED 2>&1
+# Dry-run clang-format per file — avoids path issues with word-split lists
+git diff --name-only -- '*.c' '*.cc' '*.cpp' '*.h' | while read -r f; do
+  clang-format --dry-run --Werror "$f" 2>&1
+done
 ```
 
-If `clang-format` exits non-zero, it prints the reformatting warnings. Record any violations (file name + line range is sufficient). No `git restore` is needed since `--dry-run` does not modify files.
+If any file exits non-zero, clang-format prints the reformatting warnings. Record violations (file name + line range is sufficient) and note whether they are in newly added lines or pre-existing. No `git restore` is needed since `--dry-run` does not modify files.
 
 ---
 
@@ -160,7 +164,7 @@ The relevant tests are those identified in Phase 1; for ssl_gtest use a `GTESTFI
 cd "$NSS_DIR"
 NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh -c --ubsan --asan 2>&1 | tail -30
 ```
-Record: build success/failure, any warnings in changed files.
+If the build succeeds cleanly, say "Build OK." Only show output on failure or warnings in changed files.
 
 **Run relevant tests** (reuse the `GTESTFILTER` extracted in Phase 2, or extract it now if Phase 2 was skipped):
 ```sh
@@ -173,10 +177,12 @@ fi
 
 cd "$NSS_DIR/tests"
 HOST=localhost DOMSUF=localdomain USE_64=1 DIST="$NSS_DIST_DIR" \
-  GTESTFILTER="$GTESTFILTER" bash ssl_gtests/ssl_gtests.sh
+  GTESTFILTER="$GTESTFILTER" bash ssl_gtests/ssl_gtests.sh 2>&1 \
+  | tee /tmp/post-patch-run.log | tail -15
+grep -E "^\[  FAILED  \]|: Failure$|Expected|Which is:" /tmp/post-patch-run.log | head -30
 ```
 
-Expected: all tests pass, including any new test cases that failed in Phase 2. Record any UBSan errors (undefined behaviour reports) and ASan errors (heap/stack overflow, use-after-free, etc.) that appear in the test output.
+Expected: all tests pass. If they do and no sanitizer errors appear, say "All tests pass. No sanitizer issues." Only report detail on failures or sanitizer findings.
 
 ---
 
@@ -202,74 +208,91 @@ TARGET=tls-client   # e.g. tls-client, tls-server, dtls-client, dtls-server, ech
   -max_total_time=30 -artifact_prefix=/tmp/fuzz-$TARGET- 2>&1 | tail -10
 ```
 
-Record: any crashes or timeouts found. Note the exec/s rate as a sanity check that the fuzzer is running.
+If no crashes are found, say "No crashes (Xk exec/s)." Only report detail on crashes or anomalies.
 
 ---
 
 ## Phase 7: Coverage Check
 
-Use `./mach test-coverage` for unit-test line coverage and `./mach fuzz-coverage` for fuzzer coverage. Do not attempt to pass coverage flags directly to `build.sh` — that approach does not work.
+Use `./mach test-coverage` for unit-test line coverage. Do not attempt to pass coverage flags directly to `build.sh` — that approach does not work.
 
-**For unit test coverage** (run relevant test suites only using `--test`):
+**Run coverage and capture the LCOV path:**
 ```sh
 cd "$NSS_DIR"
-./mach test-coverage --test ssl_gtests
+./mach test-coverage --test ssl_gtests 2>&1 | tee /tmp/coverage-run.log | tail -10
+LCOV_FILE=$(grep "Coverage LCOV data:" /tmp/coverage-run.log | awk '{print $NF}')
+echo "LCOV: $LCOV_FILE"
 ```
 
-**For fuzz coverage** (limit to relevant fuzzer targets using `--targets`):
+**Use diff-cover to focus on lines changed by the patch:**
 ```sh
-cd "$NSS_DIR"
-./mach fuzz-coverage --targets tls-client,tls-server --max-total-time=30
+# Combine all patch files into one diff
+cat /workspaces/nss-dev/bugs/$BUGNUM/attachments/*.diff > /tmp/review-$BUGNUM.diff
+
+COVERAGE_REPORT=/workspaces/nss-dev/bugs/$BUGNUM/coverage-report.html
+diff-cover "$LCOV_FILE" \
+  --diff-file /tmp/review-$BUGNUM.diff \
+  --html-report "$COVERAGE_REPORT" \
+  2>&1
+echo "Coverage report: $COVERAGE_REPORT"
 ```
 
-Both commands produce an HTML report and a summary. Focus the coverage assessment on the specific files changed in the patch. Report percentage coverage and any uncovered lines in changed code that seem like they should be tested.
+diff-cover prints a per-file summary of what percentage of lines added/changed by the patch are covered. If coverage looks adequate for the changed files, say "Coverage adequate for changed files." Only call out specific uncovered lines if they look like they should be tested.
 
-If coverage tools are unavailable or the build fails, note it and skip.
+If `diff-cover` is not installed or the build fails, say "Skipped — [reason]" and move on.
 
 ---
 
 ## Phase 8: Review Summary
 
-Produce a structured review report covering all phases, followed by a worktree cleanup note:
+Produce a compact review report. For phases with no issues, use a single "No issues" line — do not repeat the details. Only expand on phases that found real problems.
+
+**Record the end time:**
+```sh
+date -u +%s
+```
+Calculate elapsed wall-clock time from the start time recorded before Phase 0.
+
+Write the report to `/workspaces/nss-dev/bugs/<BUGNUM>/review.md` so it persists alongside the bug data.
+
+Report format:
 
 ```
-## NSS Bug $ARGUMENTS — Patch Review
+# NSS Bug <BUGNUM> — Patch Review
 
-### Patch Summary
-[1-2 sentence description of what the patch does]
+**Patch**: [1-2 sentence description]
+**Files**: [list of changed files]
+**Verdict**: [APPROVE / NEEDS WORK / NEEDS DISCUSSION]
 
-### Files Changed
-[List of files and brief description of changes]
+## Results
 
-### clang-format (Phase 4)
-- [CLEAN / violations found in new code: ...]
+| Phase | Result |
+|---|---|
+| clang-format | No issues / [detail if problems] |
+| Pre-patch tests | N/A / Fail as expected / [detail if unexpected] |
+| Post-patch tests | Pass / [detail if failures] |
+| Sanitizers (UBSan+ASan) | Clean / [detail if findings] |
+| Fuzzing | N/A / Clean / [detail if crashes] |
+| Coverage | Adequate / [detail if gaps] |
 
-### Test Verification
-- Pre-patch (Phase 2): [new tests FAIL as expected / not applicable / UNEXPECTED PASS]
-- Post-patch (Phase 5): [all tests PASS / failures listed]
+## Timing
 
-### Sanitizer Results
-- UBSan + ASan (Phase 5): [CLEAN / issues found: ...]
+| Metric | Value |
+|---|---|
+| Wall time | [Xm Ys] |
 
-### Fuzzing (Phase 6)
-- Fuzzers run: [list or "N/A"]
-- Crashes found: [none / list]
+## Issues
 
-### Coverage (Phase 7)
-- Changed files coverage: [X% / not measured]
-- Uncovered lines of concern: [none / list]
+[Numbered list of issues to address. If none, write "None."]
 
-### Code Quality Notes
-[Any observations about the code changes: correctness, style, edge cases, missing error handling, etc.]
+## Code Quality Notes
 
-### Verdict
-[APPROVE / NEEDS WORK / NEEDS DISCUSSION]
-
-### Recommendations
-[Numbered list of any issues that should be addressed before landing]
+[Only include if there are observations worth mentioning — correctness concerns, edge cases, style issues in new code. Omit this section entirely if the code looks good.]
 ```
 
-After delivering the report, print the cleanup commands so the user can remove the worktree and dist when they're done:
+After writing the report, print:
+1. The path to the saved report file.
+2. The cleanup commands:
 
 ```sh
 # To remove the review worktree and its build artefacts when done:

@@ -32,15 +32,17 @@ Inside the container, Claude Code is pre-installed and pre-configured. NSS and N
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| Clang/LLVM | 18 | Default C/C++ compiler (`CC=clang`) |
+| Clang/LLVM | 18 | Default C/C++ compiler (via ccache) |
+| ccache | distro | Compiler cache; persistent volume survives rebuilds |
 | GCC | distro | Available as fallback |
 | ninja | distro | Build system used by NSS |
 | gyp | distro | NSS build file generator |
 | git-cinnabar | 0.7.3 | Git frontend for Mozilla's Mercurial repos |
 | weggli | latest | Semantic C/C++ code search |
+| diff-cover | latest | Coverage analysis focused on changed lines |
 | Claude Code | latest | AI coding assistant |
 
-Sanitizer builds (`./build.sh --asan --ubsan`) work out of the box because `CC` and `CXX` default to clang.
+Sanitizer builds (`./build.sh --asan --ubsan`) work out of the box. `CC` and `CXX` are set to `ccache clang` / `ccache clang++` — ccache is transparent to the build system and its cache persists across container rebuilds.
 
 ## Directory Layout
 
@@ -57,6 +59,7 @@ Inside the container, the workspace is `/workspaces/nss-dev/`:
 /workspaces/nss-dev/
 ├── nss/                # NSS source (Docker volume)
 ├── nspr/               # NSPR source (Docker volume)
+├── .ccache/            # Compiler cache (Docker volume)
 ├── bugs/               # Bind-mounted from host
 ├── .claude/            # Bind-mounted from container-claude/
 └── CLAUDE.md           # Symlink → .claude/CLAUDE.md
@@ -70,6 +73,7 @@ Inside the container, the workspace is `/workspaces/nss-dev/`:
 | `host-tools/bz-fetch.py` | Fetch bugs from Bugzilla with comments, attachments, and Phabricator diffs. Accepts multiple bug numbers. |
 | `host-tools/connect.sh` | Exec into a running dev container. |
 | `host-tools/fresh-container.sh` | Tear down and rebuild the container, then connect. |
+| `host-tools/status.sh` | Report container state, persistent volumes, build artifacts, and environment config. |
 
 ### Fetching Bugs
 
