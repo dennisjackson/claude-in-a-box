@@ -1,0 +1,38 @@
+{
+  "name": "NSS (Mozilla) C/C++ Development",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/config,type=bind",
+  "workspaceFolder": "/workspaces/nss-dev",
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {},
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/node:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "C_Cpp.default.compilerPath": "/usr/bin/clang",
+        "C_Cpp.default.cStandard": "c17",
+        "C_Cpp.default.cppStandard": "c++17",
+        "editor.formatOnSave": true
+      },
+      "extensions": [
+        "ms-vscode.cpptools",
+        "llvm-vs-code-extensions.vscode-clangd",
+        "ms-python.python"
+      ]
+    }
+  },
+  "mounts": [
+    "source=nss-dev-nspr,target=/workspaces/nss-dev/nspr,type=volume",
+    "source=nss-dev-nss,target=/workspaces/nss-dev/nss,type=volume"
+  ],
+  "containerEnv": {
+    "CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS": "true",
+    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}"
+  },
+  "postCreateCommand": "bash /workspaces/config/.devcontainer/post-create.sh",
+  "remoteUser": "vscode"
+}
