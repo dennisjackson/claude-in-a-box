@@ -15,8 +15,10 @@ build environment it can explore and modify freely without affecting the host.
 
 ## Host Tools
 
-- `host-tools/bz-fetch.py <bug-id>` — fetch a Bugzilla bug (with comments, attachments, Phabricator diffs) into `bugs/bug-<id>/` as markdown for Claude to read inside the container.
+- `host-tools/bz-fetch.py <bug-id> [...]` — fetch Bugzilla bugs (with comments, attachments, Phabricator diffs) into `bugs/bug-<id>/` as markdown for Claude to read inside the container.
 - `host-tools/setup-envrc.sh` — interactively populate `.envrc` with API keys (`ANTHROPIC_API_KEY`, `BUGZILLA_API_KEY`, `PHABRICATOR_API_TOKEN`).
+- `host-tools/connect.sh` — exec into a running dev container.
+- `host-tools/fresh-container.sh` — tear down and rebuild the dev container, then connect.
 
 ## Workflow
 
@@ -51,9 +53,14 @@ writable from inside the container.
 
 ### Container hardening
 
-- **Capability drop** — the container runs with `--cap-drop=ALL` and
-  `--security-opt=no-new-privileges`, removing all Linux capabilities and
-  preventing privilege escalation via setuid binaries.
+- **Capability drop** — the container runs with `--cap-drop=ALL
+  --cap-add=SYS_PTRACE` and `--security-opt=no-new-privileges`, removing all
+  Linux capabilities except `SYS_PTRACE` (required by ASan's stack unwinder)
+  and preventing privilege escalation via setuid binaries.
+- **Custom seccomp profile** — a custom seccomp profile
+  (`.devcontainer/seccomp.json`) extends Docker's default allowlist with
+  `ptrace` and `personality` (ADDR_NO_RANDOMIZE) for ASan support. All other
+  blocked syscalls (kexec_load, bpf, userfaultfd, etc.) remain blocked.
 - **Read-only config mounts** — `.git` and `.devcontainer` are mounted
   read-only so the container cannot tamper with host repo state or its own
   build definition.
@@ -85,6 +92,12 @@ In particular:
 - **Security Model** — if hardening flags, mounts, capabilities, user config,
   or network access change.
 - **Workflow** — if the setup or usage steps change.
+
+## Toolchain
+
+The container ships **Clang 18** (from the official LLVM apt repository) and
+defaults to `CC=clang CXX=clang++`. This is required for NSS sanitizer builds
+(`--asan`, `--ubsan`) which use Clang-only flags like `-fsanitize=local-bounds`.
 
 ## Design Principles
 

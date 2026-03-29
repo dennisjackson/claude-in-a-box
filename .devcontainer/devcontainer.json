@@ -3,7 +3,12 @@
   "build": {
     "dockerfile": "Dockerfile"
   },
-  "runArgs": ["--cap-drop=ALL", "--security-opt=no-new-privileges"],
+  "runArgs": [
+    "--cap-drop=ALL",
+    "--cap-add=SYS_PTRACE",
+    "--security-opt=no-new-privileges",
+    "--security-opt=seccomp=${localWorkspaceFolder}/.devcontainer/seccomp.json"
+  ],
   "workspaceMount": "",
   "workspaceFolder": "/workspaces/nss-dev",
   "features": {
@@ -28,6 +33,7 @@
   "mounts": [
     "source=nss-dev-nspr,target=/workspaces/nss-dev/nspr,type=volume",
     "source=nss-dev-nss,target=/workspaces/nss-dev/nss,type=volume",
+    "source=nss-dev-ccache,target=/workspaces/nss-dev/.ccache,type=volume",
     "source=${localWorkspaceFolder}/.git,target=/workspaces/config/.git,type=bind,readonly",
     "source=${localWorkspaceFolder}/.devcontainer,target=/workspaces/config/.devcontainer,type=bind,readonly",
     "source=${localWorkspaceFolder}/container-claude,target=/workspaces/nss-dev/.claude,type=bind",
