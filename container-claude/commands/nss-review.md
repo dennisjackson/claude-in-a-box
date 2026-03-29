@@ -1,7 +1,7 @@
 ---
 name: nss-review
 description: Review an NSS/NSPR bug patch. Use when the user says "/nss-review BUGNUM", "review bug XXXXX", "review patch for bug", "review patches in worktree <name>", or similar. Performs full patch validation including test verification, sanitizer builds, fuzzing, and coverage analysis.
-version: 1.4.0
+version: 1.5.0
 disable-model-invocation: true
 ---
 
@@ -129,20 +129,58 @@ If a `bugs/$BUGNUM/index.md` or similar summary file exists, read it for additio
 
 ---
 
-## Phase 2: Pre-Patch Test Verification (Tests Must Fail)
+## Phase 2: Test Adequacy Analysis
+
+This phase determines whether the patch's tests actually validate the core issue. Perform this analysis before running any tests so the results of later phases can be evaluated against it.
+
+**2a. Identify the core issue being fixed.**
+
+Read the bug summary (`bugs/$BUGNUM/index.md` if available), the patch diff, and any commit messages. Answer concisely:
+- What is the root cause of the bug? (e.g., buffer overread, use-after-free, integer overflow, logic error, missing validation)
+- What is the trigger condition? (e.g., a specific TLS message, a malformed certificate, a particular API call sequence)
+- What is the security impact? (e.g., crash, information disclosure, authentication bypass, none)
+
+**2b. Identify related security concerns.**
+
+Based on the root cause and the subsystem(s) touched, list any related classes of vulnerability that a thorough reviewer should consider. For example:
+- If the fix bounds-checks a length field: are there **other callers** of the same function or **sibling code paths** that parse the same structure and might have the same bug?
+- If the fix addresses a TLS state machine issue: could the same mis-transition occur in DTLS, or in a different handshake mode (PSK, 0-RTT, HRR)?
+- If the fix null-checks a pointer: could the same pointer be null at **other dereference sites** in the same function or callers?
+- If the fix touches memory allocation/free: are there double-free, use-after-free, or leak variants in nearby code?
+
+List 0–5 specific related concerns. Do not fabricate concerns that are not supported by the code — if nothing related stands out, say "No related concerns identified."
+
+**2c. Evaluate whether the provided tests cover the critical issue.**
+
+Examine any new or modified test cases in the patch. For each, answer:
+1. **Does it exercise the exact trigger condition?** A test that merely calls the affected function is not sufficient — it must set up the specific input or state that triggers the bug.
+2. **Does it verify the correct behaviour under the fix?** (e.g., returns an error code, does not crash, produces expected output)
+3. **Does it cover the related concerns from 2b?** If not, note which concerns remain untested.
+
+Produce a short verdict:
+- **Tests adequate** — the critical path and key variants are tested.
+- **Tests partially adequate** — the critical path is tested but [specific gaps].
+- **Tests inadequate** — the tests do not exercise the actual trigger condition, or no tests are provided for a security-relevant fix.
+- **No tests provided** — note whether tests are expected (security fix → tests strongly expected; trivial refactor → may be acceptable).
+
+Record this verdict and the gaps (if any) for the final report. Do not block the review on this — it is an assessment, not a gate.
+
+---
+
+## Phase 3: Pre-Patch Test Verification (Tests Must Fail)
 
 This phase verifies that any new test cases in the patch actually test the bug being fixed.
 
 **Only run this phase if the patch adds new gtest test cases.**
 
-2a. Determine the state of the working tree:
+3a. Determine the state of the working tree:
 
 **Worktree mode** — patches are already committed; the working tree should be clean.
 To test unfixed code, temporarily check out the base commit, then restore:
 ```sh
 PATCHED_HEAD=$(git -C "$NSS_DIR" rev-parse HEAD)
 git -C "$NSS_DIR" checkout "$BASE"
-# → proceed to step 2b
+# → proceed to step 3b
 # After testing, restore with: git -C "$NSS_DIR" checkout $PATCHED_HEAD
 ```
 
@@ -150,20 +188,20 @@ git -C "$NSS_DIR" checkout "$BASE"
 ```sh
 git -C "$NSS_DIR" status
 ```
-- **Clean working tree**: proceed to step 2b directly.
+- **Clean working tree**: proceed to step 3b directly.
 - **Dirty working tree** (patches already applied): stash all changes, then apply only the test-addition patch(es) — i.e. the patch file(s) that only add new test cases without modifying production code:
   ```sh
   git -C "$NSS_DIR" stash
   git -C "$NSS_DIR" apply /path/to/test-only-patch.diff
   ```
 
-2b. Build NSS (standard build):
+3b. Build NSS (standard build):
 ```sh
 cd "$NSS_DIR"
 NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh 2>&1 | tail -20
 ```
 
-2c. Extract new test names programmatically from the patch diff, then run them in a single invocation:
+3c. Extract new test names programmatically from the patch diff, then run them in a single invocation:
 ```sh
 GTESTFILTER=$(grep -E '^\+\s*TEST(_F|_P)?\(' "$PATCH_FILE" \
   | sed -E 's/.*TEST(_F|_P)?\(([^,]+),\s*([^)]+)\).*/\2.\3/' \
@@ -186,7 +224,7 @@ After testing, restore the patched state:
 
 ---
 
-## Phase 3: Apply the Patch
+## Phase 4: Apply the Patch
 
 **Worktree mode** — patches are already committed; nothing to apply. Confirm:
 ```sh
@@ -196,14 +234,14 @@ Record the commit summary and move on.
 
 **Bug-number mode:**
 
-If the working tree is clean (patches not yet applied, or just restored from stash in Phase 2):
+If the working tree is clean (patches not yet applied, or just restored from stash in Phase 3):
 ```sh
 cd "$NSS_DIR"
 git apply --check "$PATCH_FILE"   # dry run first
 git apply "$PATCH_FILE"
 ```
 
-If Phase 2 stashed the original changes: restore the full set of patches via `git stash pop` instead of re-applying manually.
+If Phase 3 stashed the original changes: restore the full set of patches via `git stash pop` instead of re-applying manually.
 
 If there are multiple patch files in bug-number mode: apply them in dependency order (fix patch first, then additional test patches, or combined if independent).
 
@@ -211,7 +249,7 @@ If `git apply` fails, try `patch -p1 < "$PATCH_FILE"`. Record any apply errors o
 
 ---
 
-## Phase 4: clang-format Check
+## Phase 5: clang-format Check
 
 Check that all modified C/C++ source files in the patch conform to NSS formatting rules. Run `clang-format --dry-run --Werror` on only the files changed by the patch. This avoids modifying the working tree and cleanly separates patch violations from pre-existing ones.
 
@@ -235,7 +273,7 @@ If any file exits non-zero, clang-format prints the reformatting warnings. Recor
 
 ---
 
-## Phase 5: Build and Test (UBSan + ASan combined)
+## Phase 6: Build and Test (UBSan + ASan combined)
 
 UBSan and ASan can be enabled together in a single build. Build once, run the relevant tests once, and record results for both sanitizers.
 
@@ -248,7 +286,7 @@ NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh -c --ubsan --asan 2>&1 | tail -30
 ```
 If the build succeeds cleanly, say "Build OK." Only show output on failure or warnings in changed files.
 
-**Run relevant tests** (reuse the `GTESTFILTER` extracted in Phase 2, or extract it now if Phase 2 was skipped):
+**Run relevant tests** (reuse the `GTESTFILTER` extracted in Phase 3, or extract it now if Phase 3 was skipped):
 ```sh
 if [ -z "$GTESTFILTER" ]; then
   GTESTFILTER=$(grep -E '^\+\s*TEST(_F|_P)?\(' "$PATCH_FILE" \
@@ -267,7 +305,7 @@ Expected: all tests pass. If they do and no sanitizer errors appear, say "All te
 
 ---
 
-## Phase 6: Fuzzing (Brief)
+## Phase 7: Fuzzing (Brief)
 
 Only run fuzzers identified as relevant in Phase 1. Skip this phase if no relevant fuzzers were identified.
 
@@ -293,7 +331,7 @@ If no crashes are found, say "No crashes (Xk exec/s)." Only report detail on cra
 
 ---
 
-## Phase 7: Coverage Check
+## Phase 8: Coverage Check
 
 Use `./mach test-coverage` for unit-test line coverage. Do not attempt to pass coverage flags directly to `build.sh` — that approach does not work.
 
@@ -322,7 +360,7 @@ If `diff-cover` is not installed or the build fails, say "Skipped — [reason]" 
 
 ---
 
-## Phase 8: Review Summary
+## Phase 9: Review Summary
 
 Produce a compact review report. For phases with no issues, use a single "No issues" line — do not repeat the details. Only expand on phases that found real problems.
 
@@ -347,10 +385,23 @@ Report format:
 **Mode**: [worktree: <name> / bug attachments]
 **Verdict**: [APPROVE / NEEDS WORK / NEEDS DISCUSSION]
 
+## Core Issue
+
+**Root cause**: [1 sentence — e.g., buffer overread in TLS extension parsing]
+**Trigger**: [1 sentence — e.g., malformed SNI extension with zero-length hostname]
+**Security impact**: [None / Low / Medium / High — with brief justification]
+
+## Test Adequacy
+
+**Verdict**: [Tests adequate / Tests partially adequate / Tests inadequate / No tests provided]
+**Gaps**: [Specific untested scenarios, or "None"]
+**Related concerns**: [Security-relevant sibling issues identified in Phase 2, or "None"]
+
 ## Results
 
 | Phase | Result |
 |---|---|
+| Test adequacy | [Verdict from Phase 2] |
 | clang-format | No issues / [detail if problems] |
 | Pre-patch tests | N/A / Fail as expected / [detail if unexpected] |
 | Post-patch tests | Pass / [detail if failures] |
