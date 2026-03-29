@@ -37,17 +37,36 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && apt-get autoremove -y && apt-get clean -y \
         && rm -rf /var/lib/apt/lists/*
 
+# Install Node.js 22 LTS (Ubuntu 22.04's packaged version is too old for Claude Code)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && node --version
+
 # Install git-cinnabar (use Git to work with Mercurial repos)
 RUN curl -sL https://github.com/glandium/git-cinnabar/releases/download/0.7.3/git-cinnabar.linux.x86_64.tar.xz \
     | tar -xJ --strip-components=1 -C /usr/local/bin/ \
     && git cinnabar --version
 
+# Install Rust toolchain (available to all users via /usr/local)
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH="/usr/local/cargo/bin:$PATH"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --no-modify-path \
+    && chmod -R a+r /usr/local/rustup /usr/local/cargo \
+    && rustc --version
+
 # Install weggli (semantic C/C++ code search)
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
-    && . "$HOME/.cargo/env" \
-    && cargo install weggli \
-    && cp "$HOME/.cargo/bin/weggli" /usr/local/bin/ \
-    && rustup self uninstall -y
+RUN cargo install weggli \
+    && weggli --version
+
+# Install Claude Code
+RUN npm install -g @anthropic-ai/claude-code \
+    && claude --version
 
 # Create workspace directory for NSS development
-RUN mkdir -p /workspaces/nss-dev && chown vscode:vscode /workspaces/nss-dev
+# Volume mount points must be owned by vscode before volumes are attached,
+# so that Docker preserves ownership when creating empty named volumes.
+RUN mkdir -p /workspaces/nss-dev /workspaces/nss-dev/nspr /workspaces/nss-dev/nss \
+    && chown -R vscode:vscode /workspaces/nss-dev

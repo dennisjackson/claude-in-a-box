@@ -4,17 +4,6 @@ set -euo pipefail
 WORKSPACE="/workspaces/nss-dev"
 mkdir -p "${WORKSPACE}"
 
-echo "==> Installing Claude Code..."
-npm install -g @anthropic-ai/claude-code
-
-echo "==> Verifying tools..."
-gcc --version 2>&1 | head -1 || true
-clang --version 2>&1 | head -1 || true
-ninja --version
-git cinnabar --version
-weggli --version || true
-claude --version
-
 echo "==> Configuring Claude Code..."
 mkdir -p ~/.claude
 
@@ -67,9 +56,6 @@ PREFS
 
 echo "==> Linking CLAUDE.md into workspace..."
 ln -sf .claude/CLAUDE.md "${WORKSPACE}/CLAUDE.md"
-
-echo "==> Fixing volume ownership..."
-sudo chown vscode:vscode "${WORKSPACE}/nspr" "${WORKSPACE}/nss"
 
 echo "==> Syncing NSS and NSPR via git-cinnabar into ${WORKSPACE}..."
 clone_or_pull() {

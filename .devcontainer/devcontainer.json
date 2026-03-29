@@ -3,12 +3,12 @@
   "build": {
     "dockerfile": "Dockerfile"
   },
+  "runArgs": ["--cap-drop=ALL", "--security-opt=no-new-privileges"],
   "workspaceMount": "",
   "workspaceFolder": "/workspaces/nss-dev",
   "features": {
     "ghcr.io/devcontainers/features/common-utils:2": {},
-    "ghcr.io/devcontainers/features/git:1": {},
-    "ghcr.io/devcontainers/features/node:1": {}
+    "ghcr.io/devcontainers/features/git:1": {}
   },
   "customizations": {
     "vscode": {
