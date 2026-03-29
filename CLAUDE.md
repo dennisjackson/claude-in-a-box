@@ -37,8 +37,36 @@ Repos are cloned via git-cinnabar. Use standard git commands — cinnabar transl
 - **bear** — generate `compile_commands.json` for IDE integration: `bear -- ./build.sh`
 - **lcov** — code coverage
 
+## Running Tests
+
+### Running all tests
+```sh
+cd /workspaces/nss-dev/nss/tests
+HOST=localhost DOMSUF=localdomain bash all.sh
+```
+
+### Running ssl gtests
+Do **not** invoke `ssl_gtest` directly — it requires a cert DB populated by the test harness. Use:
+```sh
+cd /workspaces/nss-dev/nss/tests
+HOST=localhost DOMSUF=localdomain USE_64=1 DIST=/workspaces/nss-dev/dist bash ssl_gtests/ssl_gtests.sh
+```
+The script creates the DB, generates all test certificates, then runs the binary. Running `ssl_gtest` directly (even against a manually created DB) will fail with certificate loading errors and likely crash.
+
+### Running a specific gtest suite by name
+Set `GTESTFILTER` to a gtest filter expression:
+```sh
+HOST=localhost DOMSUF=localdomain USE_64=1 DIST=/workspaces/nss-dev/dist GTESTFILTER="TlsConnectTest.*" bash ssl_gtests/ssl_gtests.sh
+```
+
+### Other individual test scripts
+Each test has its own script under `nss/tests/` (e.g. `ssl/ssl.sh`, `cert/cert.sh`). They all require `HOST` and `DOMSUF` to be set.
+
 ## NSS Code Conventions
 - C11 / C++17
 - NSS uses `PK11_*`, `SEC_*`, `CERT_*`, `NSS_*` prefixes for public APIs
 - NSPR uses `PR_*` prefix
 - Test binaries are in `nss/tests/` and run via `nss/tests/all.sh`
+
+## Keeping This File Up to Date
+When something surprising or non-obvious is discovered about how to build, test, or work in this environment, update this file. The goal is that future sessions should not have to rediscover the same things.

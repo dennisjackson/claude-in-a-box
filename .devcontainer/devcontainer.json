@@ -27,7 +27,10 @@
   },
   "mounts": [
     "source=nss-dev-nspr,target=/workspaces/nss-dev/nspr,type=volume",
-    "source=nss-dev-nss,target=/workspaces/nss-dev/nss,type=volume"
+    "source=nss-dev-nss,target=/workspaces/nss-dev/nss,type=volume",
+    "source=${localWorkspaceFolder}/.git,target=/workspaces/config/.git,type=bind,readonly",
+    "source=${localWorkspaceFolder}/.devcontainer,target=/workspaces/config/.devcontainer,type=bind,readonly",
+    "source=${localWorkspaceFolder}/.envrc,target=/workspaces/config/.envrc,type=bind,readonly"
   ],
   "containerEnv": {
     "CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS": "true",
