@@ -1,5 +1,12 @@
 # NSS Dev Container
 
+> **Warning — AI-assisted development requires developer judgement.**
+> Claude Code is, at best, an enthusiastic intern. Its output should not be
+> trusted without review. Even when the tool produces correct results, expert
+> judgement nearly always leads to better outcomes than the tool alone. Treat
+> everything it generates — code, analysis, suggestions — as a starting point
+> that requires verification by an expert.
+
 A sandboxed dev container for working on [Mozilla NSS/NSPR](https://firefox-source-docs.mozilla.org/security/nss/index.html) with [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Claude gets a full C/C++ build environment (Clang 18, gyp, ninja, sanitizers) that it can explore and modify freely without touching the host.
 
 ## Prerequisites
