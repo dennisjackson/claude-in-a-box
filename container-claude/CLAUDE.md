@@ -18,7 +18,8 @@ NSS uses gyp + ninja (not CMake). The `build.sh` script handles everything inclu
 ### Useful build flags
 - `./build.sh -c` — clean build
 - `./build.sh -g -v` — debug build, verbose
-- `./build.sh --fuzz` — build with fuzzing support (libFuzzer)
+- `./build.sh --fuzz --disable-tests` — build with fuzzing support (libFuzzer); always use `--disable-tests` for fuzz builds
+- `./build.sh --fuzz=tls --disable-tests` — fuzz build in Totally Lacking Security mode (required for TLS/DTLS client/server fuzzers)
 - `./build.sh --asan` — build with AddressSanitizer
 - `./build.sh --ubsan` — build with UndefinedBehaviorSanitizer
 

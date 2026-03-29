@@ -1,6 +1,6 @@
 ---
-name: review
-description: Review an NSS/NSPR bug patch. Use when the user says "/review BUGNUM", "review bug XXXXX", "review patch for bug", or similar. Performs full patch validation including test verification, sanitizer builds, fuzzing, and coverage analysis.
+name: nss-review
+description: Review an NSS/NSPR bug patch. Use when the user says "/nss-review BUGNUM", "review bug XXXXX", "review patch for bug", or similar. Performs full patch validation including test verification, sanitizer builds, fuzzing, and coverage analysis.
 version: 1.0.0
 disable-model-invocation: true
 ---
@@ -15,11 +15,14 @@ Follow each phase below in order. Record the outcome of every step — both pass
 
 ## Phase 0: Locate the Diff
 
+**Determine the bug number.** If `$ARGUMENTS` is empty, find the latest bug folder under `/workspaces/nss-dev/bugs/` by listing subdirectories sorted by name and taking the last one. Use that folder's name as the bug number for the rest of this review.
+
 Search for the patch file. Check these locations in order:
-1. `/tmp/bug$ARGUMENTS.diff`, `/tmp/bug-$ARGUMENTS.diff`, `/tmp/bug$ARGUMENTS.patch`
-2. `~/Downloads/bug$ARGUMENTS.diff`, `~/Downloads/bug$ARGUMENTS.patch`
-3. Any `.diff` or `.patch` file in `/tmp/` or `~/Downloads/` whose name contains `$ARGUMENTS`
-4. The current working directory for any `.diff` or `.patch` file
+1. `/workspaces/nss-dev/bugs/<BUGNUM>/attachments/` — list all `.diff` and `.patch` files here; if multiple exist, review all of them
+2. `/tmp/bug<BUGNUM>.diff`, `/tmp/bug-<BUGNUM>.diff`, `/tmp/bug<BUGNUM>.patch`
+3. `~/Downloads/bug<BUGNUM>.diff`, `~/Downloads/bug<BUGNUM>.patch`
+4. Any `.diff` or `.patch` file in `/tmp/` or `~/Downloads/` whose name contains `<BUGNUM>`
+5. The current working directory for any `.diff` or `.patch` file
 
 If no diff is found, stop and ask the user where the patch file is located.
 
@@ -186,7 +189,7 @@ Only run fuzzers identified as relevant in Phase 1. Skip this phase if no releva
 Build with fuzzing support:
 ```sh
 cd /workspaces/nss-dev/nss
-./build.sh --fuzz 2>&1 | tail -20
+./build.sh --fuzz --disable-tests 2>&1 | tail -20
 ```
 
 The fuzz binary is at `../dist/bin/nssfuzz` or similar. For each relevant fuzzer target, run for 30 seconds:
