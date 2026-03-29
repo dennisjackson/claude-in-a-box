@@ -34,7 +34,9 @@
     "source=${localWorkspaceFolder}/bugs,target=/workspaces/nss-dev/bugs,type=bind"
   ],
   "containerEnv": {
-    "CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS": "true",
+    "CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS": "true"
+  },
+  "remoteEnv": {
     "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}"
   },
   "postCreateCommand": "bash /workspaces/config/.devcontainer/post-create.sh",
