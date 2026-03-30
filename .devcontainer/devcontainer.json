@@ -37,7 +37,8 @@
     "source=${localWorkspaceFolder}/.git,target=/workspaces/config/.git,type=bind,readonly",
     "source=${localWorkspaceFolder}/.devcontainer,target=/workspaces/config/.devcontainer,type=bind,readonly",
     "source=${localWorkspaceFolder}/container-claude,target=/workspaces/nss-dev/.claude,type=bind",
-    "source=${localWorkspaceFolder}/bugs,target=/workspaces/nss-dev/bugs,type=bind"
+    "source=${localWorkspaceFolder}/bugs,target=/workspaces/nss-dev/bugs,type=bind",
+    "source=${localWorkspaceFolder}/.nss-exchange.git,target=/workspaces/nss-dev/.nss-exchange.git,type=bind"
   ],
   "containerEnv": {
     "CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS": "true"
@@ -45,6 +46,7 @@
   "remoteEnv": {
     "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}"
   },
+  "initializeCommand": "test -f .nss-exchange.git/HEAD || git init --bare .nss-exchange.git",
   "postCreateCommand": "bash /workspaces/config/.devcontainer/post-create.sh",
   "remoteUser": "vscode"
 }

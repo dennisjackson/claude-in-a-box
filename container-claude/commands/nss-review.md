@@ -426,7 +426,14 @@ Report format:
 
 After writing the report, print:
 1. The path to the saved report file.
-2. Cleanup commands — only for **bug-number mode** where a fresh review worktree was created:
+2. If the verdict is **APPROVE** and the patches are in a worktree with commits,
+   suggest pushing to the exchange remote so the host can fetch them:
+   ```
+   The patches look good. Push to exchange so the host can pick them up:
+     cd <NSS_DIR> && git push exchange <branch-name>
+   ```
+   Only suggest this — do not push without the user's confirmation.
+3. Cleanup commands — only for **bug-number mode** where a fresh review worktree was created:
 
 ```sh
 # Bug-number mode only — remove the review worktree and its build artefacts:

@@ -73,4 +73,11 @@ clone_or_pull "https://hg.mozilla.org/projects/nspr" "${WORKSPACE}/nspr" &
 clone_or_pull "https://hg.mozilla.org/projects/nss" "${WORKSPACE}/nss" &
 wait
 
+echo "==> Configuring exchange remote for NSS..."
+if [ -d "${WORKSPACE}/.nss-exchange.git" ]; then
+    git -C "${WORKSPACE}/nss" remote remove exchange 2>/dev/null || true
+    git -C "${WORKSPACE}/nss" remote add exchange "${WORKSPACE}/.nss-exchange.git"
+    echo "    Added 'exchange' remote to nss repo"
+fi
+
 echo "==> Done!"

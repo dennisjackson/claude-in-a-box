@@ -26,6 +26,7 @@ This is a dev container for working on Mozilla NSS (Network Security Services) a
 - `/workspaces/nss-dev/nss/` — NSS source (git-cinnabar clone from hg.mozilla.org)
 - `/workspaces/nss-dev/nspr/` — NSPR source (git-cinnabar clone from hg.mozilla.org)
 - `/workspaces/nss-dev/bugs/` — Bug context fetched from Bugzilla (markdown summaries, attachments, patches). Each bug lives in `bugs/bug-<id>/` with patches in `attachments/`.
+- `/workspaces/nss-dev/.nss-exchange.git/` — Bare git repo shared with the host (the `exchange` remote). Push finished branches here.
 - `/workspaces/nss-dev/dist/` — Default build output directory
 - `/workspaces/config/` — Dev container configuration (do not modify from inside the container)
 
@@ -59,6 +60,62 @@ Build output goes to `../dist/`.
 
 ## Source Control
 Repos are cloned via git-cinnabar. Use standard git commands — cinnabar translates to/from Mercurial transparently.
+
+## Delivering Output
+
+There are two output channels. Use the right one for the type of output.
+
+### Patches → commit on a descriptive branch in the worktree
+
+Commit finished work on a well-named branch in the worktree. The NSS repo has
+a git remote called `exchange` pointing at a shared bare repo
+(`.nss-exchange.git`). The user can push to it when they're ready for the host
+to pick up the work. **Do not push to exchange automatically** — always leave
+that to the user.
+
+```sh
+# Commit work on the branch in the worktree
+cd /workspaces/nss-dev/worktrees/<name>
+git checkout -b <branch-name>
+git add ... && git commit ...
+
+# When the user is ready to send it to the host:
+git push exchange <branch-name>
+```
+
+**Branch naming**: Use descriptive branch names that include the bug number:
+`bug-1234567-fix-tls-extension-overread`, `bug-1234567-add-sni-length-check`.
+
+**Commit messages**: Follow NSS convention:
+```
+Bug 1234567 - Short imperative description of the change
+
+Optional longer explanation of what was wrong and what this patch does.
+Keep it concise — the reviewer can read the diff.
+```
+
+- First line: `Bug NNNNNN - Description` (capital B, space after dash)
+- Keep the first line under ~72 characters
+- Separate fix and test into two commits (fix first, test second)
+- Include `Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>` at the end
+
+### Analysis and comments → write to `bugs/`
+
+Non-patch output — analysis reports, review summaries, prepared Bugzilla
+comments, coverage reports, investigation notes — goes in the bugs folder:
+
+```
+/workspaces/nss-dev/bugs/<bugnum>/
+├── bugfix-report.md      # fix summary from /nss-bugfix
+├── review.md             # review summary from /nss-review
+├── analysis.md           # investigation notes, root cause analysis
+├── bugzilla-comment.md   # prepared comment for posting to Bugzilla
+├── coverage-report.html  # diff-cover output
+└── ...
+```
+
+Use clear, descriptive filenames. The host user will review these before acting
+on them (e.g., posting a comment to Bugzilla).
 
 ## Available Tools
 - **clang/clang++** — default compiler

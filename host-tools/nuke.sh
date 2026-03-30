@@ -17,20 +17,13 @@ warn()    { printf '  %s⚠  %s%s\n' "$yellow" "$1" "$reset"; }
 ok()      { printf '  %s✓  %s%s\n' "$green" "$1" "$reset"; }
 err()     { printf '  %s✗  %s%s\n' "$red" "$1" "$reset"; }
 
-# --- Check for uncommitted changes ------------------------------------------
-section "Repository Status"
-
-git_status=$(git -C "$PROJ_DIR" status --porcelain 2>/dev/null || true)
-if [ -n "$git_status" ]; then
-    warn "Uncommitted changes in host repo:"
-    echo ""
-    echo "$git_status" | while IFS= read -r line; do
-        printf '    %s\n' "$line"
-    done
-    echo ""
-else
-    ok "Host repo working tree is clean"
-fi
+ask_yes_no() {
+    local prompt="$1"
+    local answer
+    printf '  %s [y/N] ' "$prompt"
+    read -r answer
+    [[ "$answer" =~ ^[Yy]$ ]]
+}
 
 # --- Inventory what will be destroyed ----------------------------------------
 section "The following will be destroyed"
@@ -54,19 +47,43 @@ for vol in nss-dev-nss nss-dev-nspr nss-dev-ccache; do
     fi
 done
 
-# Bugs directory
-bugs_dir="$PROJ_DIR/bugs"
-if [ -d "$bugs_dir" ]; then
-    bug_count=$(find "$bugs_dir" -maxdepth 1 -type d -name 'bug-*' 2>/dev/null | wc -l)
-    bugs_size=$(du -sh "$bugs_dir" 2>/dev/null | cut -f1 || echo "?")
-    printf '  bugs/:      %s bug(s), %s\n' "$bug_count" "$bugs_size"
+host_nss_dir="$PROJ_DIR/host-nss"
+
+# Exchange repo
+exchange_dir="$PROJ_DIR/.nss-exchange.git"
+if [ -d "$exchange_dir" ]; then
+    exchange_size=$(du -sh "$exchange_dir" 2>/dev/null | cut -f1 || echo "?")
+    exchange_branches=$(git --git-dir="$exchange_dir" branch 2>/dev/null | wc -l)
+    printf '  exchange:   %s, %s branch(es)\n' "$exchange_size" "$exchange_branches"
+
+    # Warn about exchange commits not yet in host-nss
+    if [ -d "$host_nss_dir/.git" ] && [ "$exchange_branches" -gt 0 ]; then
+        unfetched=""
+        while IFS= read -r ref; do
+            [ -z "$ref" ] && continue
+            branch="${ref##*/}"
+            commit=$(git --git-dir="$exchange_dir" rev-parse "$ref" 2>/dev/null || continue)
+            if ! git -C "$host_nss_dir" cat-file -e "$commit" 2>/dev/null; then
+                summary=$(git --git-dir="$exchange_dir" log -1 --format='%h %s' "$ref" 2>/dev/null || echo "")
+                unfetched="${unfetched}    ${bold}${branch}${reset}  ${summary}\n"
+            fi
+        done < <(git --git-dir="$exchange_dir" for-each-ref --format='%(refname)' refs/heads/)
+
+        if [ -n "$unfetched" ]; then
+            echo ""
+            warn "Exchange branches not yet in host-nss (will be lost):"
+            printf '%b' "$unfetched"
+        fi
+    fi
 else
-    printf '  bugs/:      %snot found%s\n' "$dim" "$reset"
+    printf '  exchange:   %snot found%s\n' "$dim" "$reset"
 fi
+
+bugs_dir="$PROJ_DIR/bugs"
 
 # --- Confirm -----------------------------------------------------------------
 echo ""
-printf '%s%sThis will permanently delete all container state, volumes, and bug data.%s\n' "$bold" "$red" "$reset"
+printf '%s%sThis will permanently delete the container, volumes, and exchange repo.%s\n' "$bold" "$red" "$reset"
 printf 'Type "nuke" to confirm: '
 read -r confirm
 
@@ -98,17 +115,77 @@ for vol in nss-dev-nss nss-dev-nspr nss-dev-ccache; do
     fi
 done
 
-# --- Wipe bugs directory -----------------------------------------------------
-section "Wiping bugs/"
+# --- Reset exchange repo -----------------------------------------------------
+section "Resetting exchange repo"
+
+if [ -d "$exchange_dir" ]; then
+    rm -rf "$exchange_dir"
+    git init --bare "$exchange_dir" >/dev/null 2>&1
+    ok "Exchange repo reset"
+else
+    git init --bare "$exchange_dir" >/dev/null 2>&1
+    ok "Exchange repo created"
+fi
+
+# --- Optionally wipe bugs/ --------------------------------------------------
+section "Bug data"
 
 if [ -d "$bugs_dir" ]; then
-    rm -rf "$bugs_dir"
-    mkdir -p "$bugs_dir"
-    ok "bugs/ wiped"
+    bug_count=$(find "$bugs_dir" -maxdepth 1 -type d -name 'bug-*' 2>/dev/null | wc -l)
+    if [ "$bug_count" -gt 0 ]; then
+        bugs_size=$(du -sh "$bugs_dir" 2>/dev/null | cut -f1 || echo "?")
+        printf '  %s bug(s), %s total:\n' "$bug_count" "$bugs_size"
+        find "$bugs_dir" -maxdepth 1 -type d -name 'bug-*' -printf '%f\n' 2>/dev/null | sort | while IFS= read -r bug; do
+            printf '    %s\n' "$bug"
+        done
+        echo ""
+        if ask_yes_no "Wipe bugs/?"; then
+            rm -rf "$bugs_dir"
+            mkdir -p "$bugs_dir"
+            ok "bugs/ wiped"
+        else
+            ok "bugs/ kept"
+        fi
+    else
+        ok "bugs/ is empty"
+    fi
 else
-    ok "bugs/ already absent"
+    ok "bugs/ not present"
+fi
+
+# --- Optionally wipe host-nss/ ----------------------------------------------
+section "Host NSS repo"
+
+if [ -d "$host_nss_dir/.git" ]; then
+    # Find branches not merged to upstream
+    local_branches=()
+    while IFS= read -r branch; do
+        [ -z "$branch" ] && continue
+        [[ "$branch" == *"HEAD"* ]] && continue
+        local_branches+=("$branch")
+    done < <(git -C "$host_nss_dir" branch --no-merged origin/HEAD 2>/dev/null || true)
+
+    if [ ${#local_branches[@]} -gt 0 ]; then
+        warn "Unmerged branches:"
+        for branch in "${local_branches[@]}"; do
+            last_commit=$(git -C "$host_nss_dir" log -1 --format='%h %s' "$branch" 2>/dev/null || echo "")
+            printf '    %s%-20s%s  %s\n' "$bold" "$branch" "$reset" "$last_commit"
+        done
+        echo ""
+    else
+        printf '  %sNo unmerged branches%s\n' "$dim" "$reset"
+    fi
+
+    if ask_yes_no "Wipe host-nss/?"; then
+        rm -rf "$host_nss_dir"
+        ok "host-nss/ removed"
+    else
+        ok "host-nss/ kept"
+    fi
+else
+    ok "host-nss/ not present"
 fi
 
 echo ""
-ok "All container state has been destroyed."
+ok "Nuke complete."
 echo ""

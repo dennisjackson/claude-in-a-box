@@ -11,6 +11,8 @@ build environment it can explore and modify freely without affecting the host.
 | `.devcontainer/` | Dockerfile, devcontainer.json, post-create script | ro at `/workspaces/config/` |
 | `container-claude/` | CLAUDE.md and `.claude/` skills/commands for use inside the container | rw at `/workspaces/nss-dev/.claude/` |
 | `bugs/` | Bug context fetched from Bugzilla (not tracked in git) | rw at `/workspaces/nss-dev/bugs/` |
+| `.nss-exchange.git/` | Bare git repo for extracting code from the container | rw at `/workspaces/nss-dev/.nss-exchange.git` |
+| `host-nss/` | Host-side NSS checkout with exchange remote for reviewing container output | **no** |
 | `host-tools/` | Scripts that run on the host only (bz-fetch, envrc setup) | **no** |
 
 ## Host Tools
@@ -20,7 +22,9 @@ build environment it can explore and modify freely without affecting the host.
 - `host-tools/connect.sh` — exec into a running dev container.
 - `host-tools/fresh-container.sh` — tear down and rebuild the dev container, then connect.
 - `host-tools/status.sh` — report container state, persistent volumes, build artifacts, bind mounts, and environment config. Highlights state that survives container rebuilds.
-- `host-tools/nuke.sh` — completely wipe all container state: removes the container, deletes all named volumes (nss, nspr, ccache), and clears the `bugs/` directory. Warns about uncommitted changes and requires typing "nuke" to confirm.
+- `host-tools/nuke.sh` — destroy container, volumes, and exchange repo (requires typing "nuke"). Warns about uncommitted changes and unmerged branches in `host-nss/`. Prompts separately for wiping `bugs/` and `host-nss/`.
+- `host-tools/setup-host-nss.sh` — clone NSS into `host-nss/` via git-cinnabar and add the exchange remote. Run once.
+- `host-tools/sync-host-nss.sh` — fetch exchange branches into `host-nss/` and list what's available for review.
 
 ## Workflow
 
@@ -28,6 +32,28 @@ build environment it can explore and modify freely without affecting the host.
 2. Fetch bug context: `host-tools/bz-fetch.py 1234567`
 3. Open the dev container. Claude Code is pre-installed and pre-configured inside.
 4. Claude sees `CLAUDE.md` (via symlink), the `.claude/` commands directory, bug data in `bugs/`, and the full NSS/NSPR source — everything it needs to investigate and work on a bug.
+
+## Extracting Code from the Container
+
+The container's NSS repo has an `exchange` git remote pointing at the shared
+bare repo `.nss-exchange.git/`. This avoids manually copying diffs.
+
+**Inside the container** (Claude pushes a branch):
+```
+cd /workspaces/nss-dev/nss
+git push exchange my-fix-branch
+```
+
+**On the host** (you fetch and review):
+```
+host-tools/setup-host-nss.sh   # once — clones NSS, adds exchange remote
+host-tools/sync-host-nss.sh    # fetches exchange branches, shows what's available
+cd host-nss
+git diff HEAD..exchange/my-fix-branch
+```
+
+The bare repo is a transit point — review branches before merging, just as you
+would review any code from the untrusted container.
 
 ## Security Model
 
@@ -53,6 +79,10 @@ Claude into executing arbitrary commands.
 Similarly, **do not blindly trust files in `bugs/`** — this directory is also
 writable from inside the container.
 
+**Review branches in `.nss-exchange.git/` before merging** — the container
+pushes to this bare repo. Treat pushed branches the same as any other container
+output: inspect the diff before applying to a trusted checkout.
+
 ### Container hardening
 
 - **Capability drop** — the container runs with `--cap-drop=ALL
@@ -75,9 +105,10 @@ writable from inside the container.
 
 ### Known residual risks
 
-- The `container-claude/` and `bugs/` bind mounts are read-write, giving the
-  container direct write access to those host directories. This is the primary
-  remaining escape vector (via write-back of poisoned files).
+- The `container-claude/`, `bugs/`, and `.nss-exchange.git/` bind mounts are
+  read-write, giving the container direct write access to those host
+  directories. This is the primary remaining escape vector (via write-back of
+  poisoned files).
 - The container has full outbound network access and could exfiltrate the API
   key or fetch malicious payloads.
 - The `.git` read-only mount exposes commit history, author info, and remote

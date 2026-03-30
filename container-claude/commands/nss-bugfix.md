@@ -309,9 +309,19 @@ For each potential issue found, note:
 
 ---
 
-## Phase 6: Commit and Report
+## Phase 6: Commit, Push, and Report
 
-### 6a. Commit the fix (patch 1 of 2)
+### 6a. Create a descriptive branch
+
+Create a branch with a descriptive name including the bug number:
+```sh
+cd "$NSS_DIR"
+BRANCH_NAME="bug-$BUGNUM-<short-description>"
+# e.g. bug-1234567-fix-tls-extension-overread
+git checkout -b "$BRANCH_NAME"
+```
+
+### 6b. Commit the fix (patch 1 of 2)
 
 Commit **only the production code fix** — no test files. Stage the specific files that constitute the fix:
 ```sh
@@ -328,7 +338,7 @@ EOF
 )"
 ```
 
-### 6b. Commit the test (patch 2 of 2)
+### 6c. Commit the test (patch 2 of 2)
 
 Commit the reproducer test as a separate patch:
 ```sh
@@ -344,18 +354,6 @@ EOF
 )"
 ```
 
-### 6c. Generate patch files
-
-```sh
-mkdir -p /workspaces/nss-dev/bugs/$BUGNUM
-FIX_PATCH=/workspaces/nss-dev/bugs/$BUGNUM/fix-$BUGNUM.diff
-TEST_PATCH=/workspaces/nss-dev/bugs/$BUGNUM/test-$BUGNUM.diff
-git -C "$NSS_DIR" diff HEAD~2..HEAD~1 > "$FIX_PATCH"
-git -C "$NSS_DIR" diff HEAD~1..HEAD > "$TEST_PATCH"
-echo "Fix patch:  $FIX_PATCH"
-echo "Test patch: $TEST_PATCH"
-```
-
 ### 6d. Write a summary report
 
 **Record the end time:**
@@ -364,14 +362,19 @@ date -u +%s
 ```
 Calculate elapsed wall-clock time from the start time recorded before Phase 0.
 
+Create the directory if needed and write the report:
+```sh
+mkdir -p /workspaces/nss-dev/bugs/$BUGNUM
+```
+
 Write the report to `/workspaces/nss-dev/bugs/$BUGNUM/bugfix-report.md`:
 
 ```
 # NSS Bug <BUGNUM> — Fix Report
 
 **Worktree**: <worktree path>
-**Fix patch**: <fix patch file path>
-**Test patch**: <test patch file path>
+**Branch**: <branch name pushed to exchange remote>
+**Commits**: <number of commits (typically 2: fix + test)>
 
 ## Bug Summary
 
@@ -417,9 +420,14 @@ Write the report to `/workspaces/nss-dev/bugs/$BUGNUM/bugfix-report.md`:
 ```
 
 After writing the report, print:
-1. The paths to the saved report, fix patch, and test patch files.
-2. A brief summary of the fix and any systemic findings.
-3. Remind the user the worktree is at `$WORKTREE_DIR` and can be cleaned up with:
+1. The branch name and worktree path where the commits live.
+2. The path to the saved report file.
+3. A brief summary of the fix and any systemic findings.
+4. Tell the user they can push to the host when ready:
+   ```
+   git push exchange <branch-name>
+   ```
+5. Remind the user the worktree can be cleaned up with:
    ```sh
    git -C /workspaces/nss-dev/nss worktree remove $WORKTREE_DIR
    rm -rf $NSS_DIST_DIR
