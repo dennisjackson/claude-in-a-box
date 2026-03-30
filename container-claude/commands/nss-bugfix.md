@@ -324,7 +324,24 @@ BRANCH_NAME="bug-$BUGNUM-<short-description>"
 git checkout -b "$BRANCH_NAME"
 ```
 
-### 6b. Commit the fix (patch 1 of 2)
+### 6b. Check for security-sensitive commit messages
+
+Before writing commit messages, assess whether the commit message you would naturally write reveals a security vulnerability. Indicators include:
+
+- Memory safety issues: buffer overread/overwrite, use-after-free, double-free, heap overflow, stack overflow, out-of-bounds access
+- Exploitable conditions: integer overflow leading to undersized allocation, type confusion, null dereference in security-critical path
+- Crypto weaknesses: timing side-channels, nonce reuse, padding oracle, key material leak
+- Any language suggesting attacker-controllable input reaches an unsafe operation
+
+If the natural commit message **would** reveal a security bug, **ask the user** whether they want to use substitute commit messages that are technically accurate but sound more routine. Explain that detailed messages create a gap-attack window — attackers can identify the vulnerability from the commit before the patch is widely deployed.
+
+Present both options side by side:
+1. **Transparent message** — the full, specific description (e.g., "Fix heap buffer overread in TLS ClientHello extension parsing")
+2. **Innocuous message** — a correct but vague alternative (e.g., "Improve input validation in TLS extension handling")
+
+Use whichever style the user chooses for both the fix commit and the test commit.
+
+### 6c. Commit the fix (patch 1 of 2)
 
 Commit **only the production code fix** — no test files. Stage the specific files that constitute the fix:
 ```sh
@@ -339,7 +356,7 @@ EOF
 )"
 ```
 
-### 6c. Commit the test (patch 2 of 2)
+### 6d. Commit the test (patch 2 of 2)
 
 Commit the reproducer test as a separate patch:
 ```sh
@@ -353,7 +370,7 @@ EOF
 )"
 ```
 
-### 6d. Write a summary report
+### 6e. Write a summary report
 
 **Record the end time:**
 ```sh
