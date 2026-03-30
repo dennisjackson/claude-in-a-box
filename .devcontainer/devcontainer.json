@@ -48,7 +48,7 @@
   "remoteEnv": {
     "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}"
   },
-  "initializeCommand": "bash -c 'test -f .nss-exchange.git/HEAD || git init --bare .nss-exchange.git; mkdir -p bugs; printf \"%s\\n%s\\n\" \"$(git config user.name 2>/dev/null)\" \"$(git config user.email 2>/dev/null)\" > bugs/.host-git-identity'",
+  "initializeCommand": "bash -c 'test -f .nss-exchange.git/HEAD || git init --bare .nss-exchange.git; mkdir -p bugs; printf \"%s\\n%s\\n\" \"$(git config user.name 2>/dev/null)\" \"$(git config user.email 2>/dev/null)\" > bugs/.host-git-identity; bash host-tools/internal/setup-reference.sh'",
   "postCreateCommand": "bash /workspaces/config/.devcontainer/post-create.sh",
   "remoteUser": "vscode"
 }
