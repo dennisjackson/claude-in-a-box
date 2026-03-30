@@ -19,12 +19,12 @@ build environment it can explore and modify freely without affecting the host.
 
 - `host-tools/bz-fetch.py <bug-id> [...]` — fetch Bugzilla bugs (with comments, attachments, Phabricator diffs) into `bugs/bug-<id>/` as markdown for Claude to read inside the container.
 - `host-tools/setup-envrc.sh` — interactively populate `.envrc` with API keys (`ANTHROPIC_API_KEY`, `BUGZILLA_API_KEY`, `PHABRICATOR_API_TOKEN`).
-- `host-tools/connect.sh` — exec into a running dev container.
-- `host-tools/fresh-container.sh` — tear down and rebuild the dev container, then connect.
+- `host-tools/connect.sh` — connect to the dev container. Starts it if stopped, builds it if missing.
+- `host-tools/sync-host-nss.sh` — fetch exchange branches into `host-nss/` and list what's available for review. Clones NSS automatically on first run.
 - `host-tools/status.sh` — report container state, persistent volumes, build artifacts, bind mounts, and environment config. Highlights state that survives container rebuilds.
 - `host-tools/nuke.sh` — destroy container, volumes, and exchange repo (requires typing "nuke"). Warns about uncommitted changes and unmerged branches in `host-nss/`. Prompts separately for wiping `bugs/` and `host-nss/`.
-- `host-tools/setup-host-nss.sh` — clone NSS into `host-nss/` via git-cinnabar and add the exchange remote. Run once.
-- `host-tools/sync-host-nss.sh` — fetch exchange branches into `host-nss/` and list what's available for review.
+- `host-tools/internal/fresh-container.sh` — tear down and rebuild the dev container (called by `connect.sh`).
+- `host-tools/internal/setup-host-nss.sh` — clone NSS into `host-nss/` via git-cinnabar and add the exchange remote (called by `sync-host-nss.sh`).
 
 ## Workflow
 
@@ -46,8 +46,7 @@ git push exchange my-fix-branch
 
 **On the host** (you fetch and review):
 ```
-host-tools/setup-host-nss.sh   # once — clones NSS, adds exchange remote
-host-tools/sync-host-nss.sh    # fetches exchange branches, shows what's available
+host-tools/sync-host-nss.sh    # fetches exchange branches (clones NSS on first run)
 cd host-nss
 git diff HEAD..exchange/my-fix-branch
 ```

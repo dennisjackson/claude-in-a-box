@@ -11,6 +11,8 @@ Fix bug: $ARGUMENTS
 
 Follow each phase below in order. Be terse: if a phase completes without issues, just record the outcome and move on. Only provide detail when something fails, is ambiguous, or needs the user's attention.
 
+**Report requirement**: You MUST write the report file when you complete the final phase. If the user continues the conversation and subsequent discussion reveals new information — corrections, additional findings, revised severity, better understanding of root cause — update the report file to reflect the current best understanding. The report should always represent the most accurate and complete picture available.
+
 **Before starting**, record the wall-clock start time:
 ```sh
 date -u +%s
@@ -200,6 +202,7 @@ Write the minimal, self-contained fix. Guidelines:
 - **Self-contained**: The fix should be understandable on its own. If a comment is needed to explain a non-obvious invariant, add one.
 - **Clearly correct**: Prefer simple, obviously-right solutions over clever ones. The reviewer should be able to verify correctness by inspection.
 - **Defense in depth is acceptable** if clearly justified — e.g., adding a bounds check even if the caller "should" never pass a bad value, but only if the justification is real (not speculative).
+- **Minimal comments**: Do not add bug-specific comments in code or tests. Only comment to capture high-level intent or explain surprising behavior. The commit message is the right place for bug context.
 
 Make the changes in the worktree:
 ```sh
@@ -329,7 +332,7 @@ cd "$NSS_DIR"
 # Stage only the fix files (lib/, cmd/, etc. — NOT gtests/ or fuzz/)
 git add <fix-files...>
 git commit -m "$(cat <<'EOF'
-Bug BUGNUM - <short description of fix>
+Bug BUGNUM - <short description of fix> r=#nss-reviewers
 
 <1-2 sentence explanation of what was wrong and what this patch does>
 
@@ -345,7 +348,7 @@ Commit the reproducer test as a separate patch:
 cd "$NSS_DIR"
 git add -A
 git commit -m "$(cat <<'EOF'
-Bug BUGNUM - Add test for <short description>
+Bug BUGNUM - Add test for <short description> r=#nss-reviewers
 
 <1 sentence describing what the test verifies>
 

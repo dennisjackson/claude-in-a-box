@@ -1,7 +1,7 @@
 ---
 name: nss-review
 description: Review an NSS/NSPR bug patch. Use when the user says "/nss-review BUGNUM", "review bug XXXXX", "review patch for bug", "review patches in worktree <name>", or similar. Performs full patch validation including test verification, sanitizer builds, fuzzing, and coverage analysis.
-version: 1.5.0
+version: 2.0.0
 disable-model-invocation: true
 ---
 
@@ -10,6 +10,14 @@ disable-model-invocation: true
 Review bug: $ARGUMENTS
 
 Follow each phase below in order. Be terse: if a phase completes without issues, just record "No issues" and move on. Only provide detail when something fails, looks suspicious, or needs the user's attention.
+
+**Report requirement**: You MUST write the report file when you complete the final phase. If the user continues the conversation and subsequent discussion reveals new information — corrections, additional findings, revised verdict, missed issues — update the report file to reflect the current best understanding. The report should always represent the most accurate and complete picture available.
+
+**Skepticism principle**: Do not take bug descriptions, commit messages, comments, or patch rationale at face value. These are **claims** — they may be wrong, incomplete, or misleading (whether through honest error or adversarial intent). Your job is to independently verify that the patch is correct by reading the code, not by trusting the author's narrative. Specifically:
+- If the bug report says "X is the root cause," verify by reading the code that X is actually the root cause.
+- If the commit message says "this fixes the issue by doing Y," verify that Y actually addresses the problem and does not merely suppress a symptom.
+- If a comment in the patch says "this cannot happen" or "this is always non-null," treat it as a hypothesis to check, not a fact.
+- If the patch changes something you don't fully understand, read the surrounding code until you do. Do not assume the author understood it either.
 
 **Before starting**, record the wall-clock start time:
 ```sh
@@ -123,9 +131,31 @@ echo "Patch file: $PATCH_FILE"
 
 ## Phase 1: Patch Analysis
 
-Read the full diff at `$PATCH_FILE`. Internally note the files changed, subsystems affected, relevant fuzzers and test suites — you need these to drive later phases. Only output a 1-2 sentence summary of what the patch does. Save detailed file lists for the final report.
+### 1a. Read the patch
 
-If a `bugs/$BUGNUM/index.md` or similar summary file exists, read it for additional context on the bug being fixed.
+Read the full diff at `$PATCH_FILE`. Internally note the files changed, subsystems affected, and relevant test suites — you need these to drive later phases. Save detailed file lists for the final report.
+
+Note which subsystems are touched (e.g., TLS, certificates, PKCS, hashing, DTLS) — you will use this in Phase 8 to select fuzz targets from the actual inventory. Do not pre-judge which fuzzers are relevant without listing them first.
+
+If a `bugs/$BUGNUM/index.md` or similar summary file exists, read it. Treat it as **context**, not **truth** — note any claims it makes that you will need to verify.
+
+### 1b. Independently verify the root cause
+
+Do not rely on the bug report or commit message to tell you what the bug is. Read the actual pre-patch code at the defect site and answer for yourself:
+- What does this code do?
+- What invariants does it assume? Are those assumptions valid?
+- What inputs or states violate those assumptions?
+- Does your understanding of the bug match what the patch author claims? If not, note the discrepancy — it may indicate the patch fixes the wrong thing.
+
+### 1c. Verify the fix is correct
+
+Read the patched code and determine whether the fix **actually resolves the root cause** you identified in 1b (not the root cause the author claims). Check for:
+- **Symptom suppression**: Does the fix just prevent the crash/error without addressing the underlying logic flaw? (e.g., adding a NULL check that prevents a crash but leaves the code in a corrupt state)
+- **Incomplete fix**: Does the fix handle the specific trigger from the bug report but miss other inputs that trigger the same defect? (e.g., bounds-checking one field but not a sibling field parsed by the same code)
+- **Introduced defects**: Does the fix introduce new problems? (e.g., an early return that skips necessary cleanup, a bounds check that uses `<=` when it should use `<`, a signed/unsigned comparison that can still underflow)
+- **Scope creep**: Does the patch include changes unrelated to the bug fix that might introduce risk?
+
+Output a 1-2 sentence summary of what the patch does, plus a note if your understanding of the bug diverges from the author's.
 
 ---
 
@@ -167,7 +197,73 @@ Record this verdict and the gaps (if any) for the final report. Do not block the
 
 ---
 
-## Phase 3: Pre-Patch Test Verification (Tests Must Fail)
+## Phase 3: Falsification — Try to Break the Patch
+
+This phase actively tries to disprove the patch's correctness. The goal is to construct specific, testable hypotheses about how the patch could fail and then test them. A patch that survives honest attempts at falsification deserves more confidence than one that was only tested on the happy path.
+
+### 3a. Generate falsification hypotheses
+
+Based on your independent analysis in Phase 1, construct **3-7 testable hypotheses** about how the patch could be wrong. Each hypothesis should be specific enough to test by reading code, writing a test, or constructing an input. Categories to consider:
+
+**Boundary conditions:**
+- Does the fix handle the minimum value (0, empty, NULL)?
+- Does the fix handle the maximum value (UINT32_MAX, buffer-sized, etc.)?
+- Does the fix handle off-by-one at the boundary?
+
+**Alternative triggers:**
+- Can the same bug be reached through a different caller or protocol path that the fix does not cover?
+- If the fix is in TLS, does the same issue exist in DTLS (or vice versa)?
+- If the fix is in one handshake message handler, do sibling handlers have the same pattern?
+
+**Interaction and ordering:**
+- Can the vulnerable code be reached by sending messages in an unexpected order?
+- Does the fix depend on state that could be different under resumption, 0-RTT, or HRR?
+- Could a race condition bypass the fix?
+
+**Fix correctness:**
+- If the fix adds a bounds check: is the bound itself trustworthy, or is it also attacker-controlled?
+- If the fix adds an error return: do all callers handle the new error code? Could the error propagation leave state half-modified?
+- If the fix changes control flow: does the new path skip cleanup, unlocking, or other side effects that the old path performed?
+
+**Regression:**
+- Does the fix break valid inputs that previously worked? (e.g., an overly strict check that rejects legal certificates or extensions)
+
+Format each hypothesis as: "H[N]: [claim that, if true, means the patch is wrong]. Test: [how to check]."
+
+### 3b. Test the hypotheses
+
+For each hypothesis, attempt to confirm or refute it:
+
+- **Code reading**: Trace the relevant code paths. Follow callers, check error handling, verify bounds. This is sufficient for most hypotheses.
+- **grep / weggli**: Search for alternative callers, sibling handlers, or the same pattern elsewhere:
+  ```sh
+  cd "$NSS_DIR"
+  grep -rn "function_name" lib/ --include='*.c'
+  weggli '<pattern>' lib/
+  ```
+- **Write a test** (if practical and the hypothesis is high-value): Construct a targeted gtest or input that exercises the hypothesized failure. Build and run it:
+  ```sh
+  cd "$NSS_DIR"
+  NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh 2>&1 | tail -20
+  cd tests
+  HOST=localhost DOMSUF=localdomain USE_64=1 DIST="$NSS_DIST_DIR" \
+    GTESTFILTER="<TestSuite>.<TestName>" bash <suite>_gtests/<suite>_gtests.sh 2>&1 \
+    | tee /tmp/falsify-run.log | tail -15
+  ```
+- **Sanitizer check**: If a hypothesis involves memory safety, the UBSan/ASan build in Phase 7 will also test it — note this and defer if appropriate.
+
+### 3c. Record results
+
+For each hypothesis, record:
+- **H[N]**: The hypothesis
+- **Result**: Refuted (the patch handles this correctly — state why) / **Confirmed** (the patch has this flaw) / **Inconclusive** (could not determine — explain why and flag for human review)
+- **Evidence**: 1-2 sentences describing what you found (file:line references, test outcome, etc.)
+
+If any hypothesis is **Confirmed**, this is a review finding — it goes into the Issues section of the final report and influences the verdict. If a hypothesis is **Inconclusive** on a security-relevant question, flag it as needing human review.
+
+---
+
+## Phase 4: Pre-Patch Test Verification (Tests Must Fail)
 
 This phase verifies that any new test cases in the patch actually test the bug being fixed.
 
@@ -224,7 +320,7 @@ After testing, restore the patched state:
 
 ---
 
-## Phase 4: Apply the Patch
+## Phase 5: Apply the Patch
 
 **Worktree mode** — patches are already committed; nothing to apply. Confirm:
 ```sh
@@ -234,14 +330,14 @@ Record the commit summary and move on.
 
 **Bug-number mode:**
 
-If the working tree is clean (patches not yet applied, or just restored from stash in Phase 3):
+If the working tree is clean (patches not yet applied, or just restored from stash in Phase 4):
 ```sh
 cd "$NSS_DIR"
 git apply --check "$PATCH_FILE"   # dry run first
 git apply "$PATCH_FILE"
 ```
 
-If Phase 3 stashed the original changes: restore the full set of patches via `git stash pop` instead of re-applying manually.
+If Phase 4 stashed the original changes: restore the full set of patches via `git stash pop` instead of re-applying manually.
 
 If there are multiple patch files in bug-number mode: apply them in dependency order (fix patch first, then additional test patches, or combined if independent).
 
@@ -249,7 +345,7 @@ If `git apply` fails, try `patch -p1 < "$PATCH_FILE"`. Record any apply errors o
 
 ---
 
-## Phase 5: clang-format Check
+## Phase 6: clang-format Check
 
 Check that all modified C/C++ source files in the patch conform to NSS formatting rules. Run `clang-format --dry-run --Werror` on only the files changed by the patch. This avoids modifying the working tree and cleanly separates patch violations from pre-existing ones.
 
@@ -273,7 +369,7 @@ If any file exits non-zero, clang-format prints the reformatting warnings. Recor
 
 ---
 
-## Phase 6: Build and Test (UBSan + ASan combined)
+## Phase 7: Build and Test (UBSan + ASan combined)
 
 UBSan and ASan can be enabled together in a single build. Build once, run the relevant tests once, and record results for both sanitizers.
 
@@ -286,7 +382,7 @@ NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh -c --ubsan --asan 2>&1 | tail -30
 ```
 If the build succeeds cleanly, say "Build OK." Only show output on failure or warnings in changed files.
 
-**Run relevant tests** (reuse the `GTESTFILTER` extracted in Phase 3, or extract it now if Phase 3 was skipped):
+**Run relevant tests** (reuse the `GTESTFILTER` extracted in Phase 4, or extract it now if Phase 4 was skipped):
 ```sh
 if [ -z "$GTESTFILTER" ]; then
   GTESTFILTER=$(grep -E '^\+\s*TEST(_F|_P)?\(' "$PATCH_FILE" \
@@ -305,24 +401,25 @@ Expected: all tests pass. If they do and no sanitizer errors appear, say "All te
 
 ---
 
-## Phase 7: Fuzzing (Brief)
+## Phase 8: Fuzzing (Brief)
 
-Only run fuzzers identified as relevant in Phase 1. Skip this phase if no relevant fuzzers were identified.
+**Target identification**: Do not guess which fuzzers are relevant based on examples or assumptions. Build with fuzzing support first, then list the actual available targets and select those that exercise code paths touched by the patch. Skip this phase only if, after listing targets, none are relevant.
 
-Build with fuzzing support. For TLS/DTLS client and server fuzzers, use `--fuzz=tls` (Totally Lacking Security mode); for all other targets, use `--fuzz`:
+**Build with fuzzing support.** TLS/DTLS client and server fuzzers require `--fuzz=tls` (Totally Lacking Security mode); all other targets use `--fuzz`. If unsure which you need, build with `--fuzz=tls` (it includes all targets):
 ```sh
 cd "$NSS_DIR"
 NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh --fuzz=tls --disable-tests 2>&1 | tail -20
 ```
 
-Fuzz binaries are named `nssfuzz-<target>` under `$NSS_DIST_DIR/Debug/bin/`. List available targets first if unsure:
+**List available fuzz targets** — this is mandatory, not optional:
 ```sh
-ls "$NSS_DIST_DIR/Debug/bin/nssfuzz-"*
+ls "$NSS_DIST_DIR/Debug/bin/nssfuzz-"* | sed 's/.*nssfuzz-//'
 ```
+Review the full list and select targets that exercise subsystems touched by the patch. The target names generally correspond to the input format or protocol they fuzz (e.g., `cert-`, `pkcs8-`, `tls-`, `dtls-`, `hash-`, etc.). Match targets to the patch's affected subsystem, not to a memorized example list.
 
-For each relevant fuzzer target, run for 30 seconds:
+**Run each relevant target** for 30 seconds:
 ```sh
-TARGET=tls-client   # e.g. tls-client, tls-server, dtls-client, dtls-server, ech
+TARGET=<selected-target>
 "$NSS_DIST_DIR/Debug/bin/nssfuzz-$TARGET" \
   -max_total_time=30 -artifact_prefix=/tmp/fuzz-$TARGET- 2>&1 | tail -10
 ```
@@ -331,7 +428,7 @@ If no crashes are found, say "No crashes (Xk exec/s)." Only report detail on cra
 
 ---
 
-## Phase 8: Coverage Check
+## Phase 9: Coverage Check
 
 Use `./mach test-coverage` for unit-test line coverage. Do not attempt to pass coverage flags directly to `build.sh` — that approach does not work.
 
@@ -360,7 +457,7 @@ If `diff-cover` is not installed or the build fails, say "Skipped — [reason]" 
 
 ---
 
-## Phase 9: Review Summary
+## Phase 10: Review Summary
 
 Produce a compact review report. For phases with no issues, use a single "No issues" line — do not repeat the details. Only expand on phases that found real problems.
 
@@ -397,11 +494,24 @@ Report format:
 **Gaps**: [Specific untested scenarios, or "None"]
 **Related concerns**: [Security-relevant sibling issues identified in Phase 2, or "None"]
 
+## Falsification
+
+[For each hypothesis tested in Phase 3, one line:]
+
+| # | Hypothesis | Result | Evidence |
+|---|---|---|---|
+| H1 | [claim] | Refuted / **Confirmed** / Inconclusive | [brief evidence] |
+| H2 | ... | ... | ... |
+
+**Confirmed findings**: [count — these are patch flaws and appear in Issues below]
+**Inconclusive**: [count — flagged for human review]
+
 ## Results
 
 | Phase | Result |
 |---|---|
 | Test adequacy | [Verdict from Phase 2] |
+| Falsification | [N hypotheses tested: N refuted, N confirmed, N inconclusive] |
 | clang-format | No issues / [detail if problems] |
 | Pre-patch tests | N/A / Fail as expected / [detail if unexpected] |
 | Post-patch tests | Pass / [detail if failures] |

@@ -26,10 +26,7 @@ source .envrc
 # 2. Fetch a bug to work on
 host-tools/bz-fetch.py 2026089
 
-# 3. Start the container (builds on first run)
-host-tools/fresh-container.sh
-
-# Or, if the container is already running:
+# 3. Connect to the container (builds on first run, starts if stopped)
 host-tools/connect.sh
 ```
 
@@ -78,9 +75,10 @@ Inside the container, the workspace is `/workspaces/nss-dev/`:
 |--------|-------------|
 | `host-tools/setup-envrc.sh` | Set up `.envrc` with API keys. Use `-f` to overwrite existing values. |
 | `host-tools/bz-fetch.py` | Fetch bugs from Bugzilla with comments, attachments, and Phabricator diffs. Accepts multiple bug numbers. |
-| `host-tools/connect.sh` | Exec into a running dev container. |
-| `host-tools/fresh-container.sh` | Tear down and rebuild the container, then connect. |
+| `host-tools/connect.sh` | Connect to the dev container — starts it if stopped, builds it if missing. |
+| `host-tools/sync-host-nss.sh` | Fetch exchange branches into `host-nss/` (clones NSS automatically on first run). |
 | `host-tools/status.sh` | Report container state, persistent volumes, build artifacts, and environment config. |
+| `host-tools/nuke.sh` | Destroy container, volumes, and exchange repo (requires confirmation). |
 
 ### Fetching Bugs
 

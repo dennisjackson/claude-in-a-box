@@ -88,13 +88,13 @@ git push exchange <branch-name>
 
 **Commit messages**: Follow NSS convention:
 ```
-Bug 1234567 - Short imperative description of the change
+Bug 1234567 - Short imperative description of the change r=#nss-reviewers
 
 Optional longer explanation of what was wrong and what this patch does.
 Keep it concise — the reviewer can read the diff.
 ```
 
-- First line: `Bug NNNNNN - Description` (capital B, space after dash)
+- First line: `Bug NNNNNN - Description r=#nss-reviewers` (capital B, space after dash, reviewer string at end)
 - Keep the first line under ~72 characters
 - Separate fix and test into two commits (fix first, test second)
 - Do NOT include any Co-Authored-By trailer
@@ -175,7 +175,7 @@ Run a target (e.g. for 30 seconds):
 ```sh
 /workspaces/nss-dev/dist/Debug/bin/nssfuzz-tls-client -max_total_time=30
 ```
-Common targets: `tls-client`, `tls-server`, `dtls-client`, `dtls-server`, `ech`. TLS/DTLS fuzzers require `--fuzz=tls` builds; other targets use `--fuzz`.
+TLS/DTLS fuzzers require `--fuzz=tls` builds; other targets use `--fuzz`. Always list the available targets rather than assuming — there are fuzzers for certificates, PKCS, hashing, and other subsystems beyond TLS.
 
 ## Formatting
 Check C/C++ files without modifying them:
@@ -188,6 +188,18 @@ clang-format --dry-run --Werror path/to/file.c
 - NSS uses `PK11_*`, `SEC_*`, `CERT_*`, `NSS_*` prefixes for public APIs
 - NSPR uses `PR_*` prefix
 - Test binaries are in `nss/tests/` and run via `nss/tests/all.sh`
+
+## Comments Policy
+Use comments very sparingly. Do not add bug-specific comments in code or tests
+(e.g., "This tests bug 1234567" or "Fixed: the length was not checked"). Good
+reasons to comment:
+- **High-level intent** that is not obvious from the code ("This parser must
+  tolerate trailing padding because older implementations emit it")
+- **Surprising behavior** that a future reader would otherwise misunderstand
+  ("Returns SECSuccess even on empty input — callers depend on this")
+
+If the code is clear, no comment is needed. Commit messages are the right place
+for bug context, not inline comments.
 
 ## Keeping This File Up to Date
 When something surprising or non-obvious is discovered about how to build, test, or work in this environment, update this file. The goal is that future sessions should not have to rediscover the same things.

@@ -5,8 +5,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOST_NSS="${REPO_ROOT}/host-nss"
 
 if [ ! -d "${HOST_NSS}/.git" ]; then
-    echo "host-nss not found. Run host-tools/setup-host-nss.sh first."
-    exit 1
+    echo "==> host-nss not found — cloning..."
+    "${REPO_ROOT}/host-tools/internal/setup-host-nss.sh"
 fi
 
 echo "==> Fetching from exchange..."
