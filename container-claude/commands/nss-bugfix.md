@@ -41,8 +41,10 @@ if [ -d "$WORKTREE_DIR" ]; then
   echo "Reusing existing worktree: $WORKTREE_DIR"
 else
   echo "Creating worktree: $WORKTREE_DIR"
-  git -C /workspaces/nss-dev/nss worktree add --detach "$WORKTREE_DIR" \
-    || git -C /workspaces/nss-dev/nss worktree add --force --detach "$WORKTREE_DIR"
+  git -C /workspaces/nss-dev/nss worktree add --detach "$WORKTREE_DIR"
+  # If this fails, do NOT use --force blindly — it may reuse a worktree with
+  # a different HEAD than expected. Diagnose the error first (e.g., stale
+  # worktree entry: run `git worktree prune` then retry).
 fi
 
 NSS_DIR=$WORKTREE_DIR
@@ -62,7 +64,7 @@ All subsequent phases use `$NSS_DIR` and `$NSS_DIST_DIR`. The main checkout at `
 
 Locate the bug folder. Check both `/workspaces/nss-dev/bugs/$BUGNUM/` and `/workspaces/nss-dev/bugs/bug-$BUGNUM/` — use whichever exists. If neither exists, **stop and ask the user** to fetch the bug data first (e.g., by providing the bug folder or running the bug fetch tool). Do not proceed without bug context.
 
-Once located, set `BUG_DIR` to the path and read everything available:
+Once located, set `BUG_DIR` to the resolved path. All subsequent phases use `$BUG_DIR` for reading and writing bug-related files (reports, coverage output, etc.). Read everything available:
 - `index.md` or any markdown summary — read in full
 - All files in `attachments/` — read patches, test cases, crash logs, stack traces
 - If multiple bugs were given, read all of them
@@ -103,9 +105,19 @@ Print a concise summary of your findings:
 Before writing any test code, verify the worktree builds cleanly on its own:
 ```sh
 cd "$NSS_DIR"
-NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh 2>&1 | tail -20
+NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh 2>&1 | tee /tmp/baseline-build.log | tail -20
+if [ ${PIPESTATUS[0]} -ne 0 ]; then
+  echo "BUILD FAILED — see /tmp/baseline-build.log"
+fi
 ```
 If the build fails, diagnose and fix the build issue first (it may be an environment problem, not a code problem). Do not proceed until the baseline builds.
+
+Before writing a new test, check whether an existing test already covers the buggy code path. Search the relevant gtest suite for tests that exercise the affected function or data path:
+```sh
+cd "$NSS_DIR"
+grep -rn "relevant_function_or_keyword" gtests/ --include='*.cc' --include='*.cpp' | head -20
+```
+If an existing test covers the code path but doesn't trigger the bug (e.g., it uses valid input), consider adding a new test case to the same test file rather than creating a new file. If an existing test would fail with the bug present (and you just need to verify), you may not need a new test at all.
 
 The goal is to create a test that **demonstrates the bug on unfixed code** (fails or crashes before the fix, passes after). Choose the most appropriate approach in this order of preference:
 
@@ -128,9 +140,11 @@ If the bug can be reproduced with a targeted test case that requires roughly **5
 
 3. Write a minimal test that:
    - Sets up the specific trigger condition identified in Phase 1
-   - Exercises the buggy code path
-   - Has a clear assertion that fails when the bug is present and passes when fixed
+   - Exercises the buggy code path through **public APIs or the gtest harness** where possible (e.g., `PK11_*`, `SEC_*`, `CERT_*`, `SSL_*`, or the TLS connect helpers), rather than calling internal/static functions directly. Exception: if the bug is in an internal function with no observable effect at the public API level, a targeted internal test is acceptable.
+   - Has a clear assertion that fails when the bug is present and passes when fixed — assert on the specific fix (e.g., error code), not incidental behavior
+   - Does not duplicate existing tests in the suite — check for tests that already cover the same code path before adding a new one
    - Follows the naming convention of the existing tests in that suite
+   - Has no verbose comments — the test name and structure should make intent clear
 
 4. Build and run the test to confirm it fails (demonstrating the bug):
    ```sh
@@ -230,8 +244,12 @@ Fix any formatting issues before proceeding.
 Build with sanitizers and confirm the reproducer now passes:
 ```sh
 cd "$NSS_DIR"
-NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh -c --ubsan --asan 2>&1 | tail -30
+NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh -c --ubsan --asan 2>&1 | tee /tmp/sanitizer-build.log | tail -30
+if [ ${PIPESTATUS[0]} -ne 0 ]; then
+  echo "BUILD FAILED — see /tmp/sanitizer-build.log"
+fi
 ```
+If the build fails, diagnose before proceeding — running tests against stale binaries produces misleading results.
 
 Run the reproducer test:
 ```sh
@@ -270,51 +288,9 @@ NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh --fuzz=tls --disable-tests --asan 2>&1 |
 
 ---
 
-## Phase 5: Systemic Analysis
+## Phase 5: Commit, Push, and Report
 
-This phase looks beyond the immediate fix for related issues. Do NOT write code in this phase — only investigate and report.
-
-### 5a. Alternative triggers
-
-Could the same bug be triggered through a different code path? Search for:
-- Other callers of the affected function
-- Other code that parses the same data structure or protocol message
-- DTLS variants if the bug is in TLS (and vice versa)
-- Different handshake modes (PSK, 0-RTT, HRR, resumption) if the bug is in handshake code
-
-```sh
-# Example: find other callers
-cd "$NSS_DIR"
-grep -rn "function_name" lib/ --include='*.c' --include='*.h'
-```
-
-### 5b. Same pattern elsewhere
-
-Does the same class of mistake appear in other parts of the codebase? Search for:
-- Similar patterns using `weggli` or `grep` (e.g., if the bug was a missing length check, search for similar unchecked lengths)
-- Code written by the same pattern (e.g., other extension parsers, other message handlers in the same file)
-- Recently changed code in the same subsystem
-
-```sh
-# Example: find similar patterns with weggli
-weggli '<pattern>' "$NSS_DIR/lib/"
-```
-
-### 5c. Report findings
-
-For each potential issue found, note:
-- File and function
-- Why it looks similar to the original bug
-- Whether it's definitely a bug or just suspicious
-- Severity estimate
-
-**Present these findings to the user.** Do not fix them — they may be intentional, already known, or out of scope. Let the user decide what to do.
-
----
-
-## Phase 6: Commit, Push, and Report
-
-### 6a. Create a descriptive branch
+### 5a. Create a descriptive branch
 
 Create a branch with a descriptive name including the bug number:
 ```sh
@@ -324,7 +300,7 @@ BRANCH_NAME="bug-$BUGNUM-<short-description>"
 git checkout -b "$BRANCH_NAME"
 ```
 
-### 6b. Check for security-sensitive commit messages
+### 5b. Check for security-sensitive commit messages
 
 Before writing commit messages, assess whether the commit message you would naturally write reveals a security vulnerability. Indicators include:
 
@@ -341,7 +317,7 @@ Present both options side by side:
 
 Use whichever style the user chooses for both the fix commit and the test commit.
 
-### 6c. Commit the fix (patch 1 of 2)
+### 5c. Commit the fix (patch 1 of 2)
 
 Commit **only the production code fix** — no test files. Stage the specific files that constitute the fix:
 ```sh
@@ -350,27 +326,28 @@ cd "$NSS_DIR"
 git add <fix-files...>
 git commit -m "$(cat <<'EOF'
 Bug BUGNUM - <short description of fix> r=#nss-reviewers
-
-<1-2 sentence explanation of what was wrong and what this patch does>
 EOF
 )"
 ```
 
-### 6d. Commit the test (patch 2 of 2)
+Keep the commit message to a single line. Only add a body if the diff is genuinely not self-explanatory (e.g., a subtle invariant the reviewer would otherwise miss). When a body is needed, keep it to 1-2 sentences explaining *why*, not restating *what* the diff shows.
 
-Commit the reproducer test as a separate patch:
+### 5d. Commit the test (patch 2 of 2)
+
+Commit the reproducer test as a separate patch. Stage only the test files explicitly — do not use `git add -A`, which can pick up editor temp files or build artifacts:
 ```sh
 cd "$NSS_DIR"
-git add -A
+# Stage only test files (gtests/, fuzz/, tests/, etc.)
+git add gtests/ fuzz/ tests/  # adjust to match actual test file locations
 git commit -m "$(cat <<'EOF'
 Bug BUGNUM - Add test for <short description> r=#nss-reviewers
-
-<1 sentence describing what the test verifies>
 EOF
 )"
 ```
 
-### 6e. Write a summary report
+Single line — no body needed for test commits.
+
+### 5e. Write a summary report
 
 **Record the end time:**
 ```sh
@@ -378,12 +355,15 @@ date -u +%s
 ```
 Calculate elapsed wall-clock time from the start time recorded before Phase 0.
 
-Create the directory if needed and write the report:
+Create the directory if needed and write the report. Use the `$BUG_DIR` resolved in Phase 1a; if no bug folder was found earlier (e.g., working without Bugzilla context), default to the `bug-` prefixed path:
 ```sh
-mkdir -p /workspaces/nss-dev/bugs/$BUGNUM
+if [ -z "$BUG_DIR" ]; then
+  BUG_DIR=/workspaces/nss-dev/bugs/bug-$BUGNUM
+fi
+mkdir -p "$BUG_DIR"
 ```
 
-Write the report to `/workspaces/nss-dev/bugs/$BUGNUM/bugfix-report.md`:
+Write the report to `$BUG_DIR/bugfix-report.md`:
 
 ```
 # NSS Bug <BUGNUM> — Fix Report
@@ -422,12 +402,6 @@ Write the report to `/workspaces/nss-dev/bugs/$BUGNUM/bugfix-report.md`:
 | Regression tests | [Pass / failures] |
 | Fuzzing | [N/A / Clean / findings] |
 
-## Systemic Analysis
-
-**Alternative triggers**: [List or "None found"]
-**Same pattern elsewhere**: [List with file:line references, or "None found"]
-**Recommendations**: [Any suggested follow-up actions]
-
 ## Timing
 
 | Metric | Value |
@@ -438,12 +412,13 @@ Write the report to `/workspaces/nss-dev/bugs/$BUGNUM/bugfix-report.md`:
 After writing the report, print:
 1. The branch name and worktree path where the commits live.
 2. The path to the saved report file.
-3. A brief summary of the fix and any systemic findings.
-4. Tell the user they can push to the host when ready:
+3. A brief summary of the fix.
+4. Suggest running `/nss-systemize $BUGNUM` to search for the same bug pattern elsewhere in the codebase.
+5. Tell the user they can push to the host when ready:
    ```
    git push exchange <branch-name>
    ```
-5. Remind the user the worktree can be cleaned up with:
+6. Remind the user the worktree can be cleaned up with:
    ```sh
    git -C /workspaces/nss-dev/nss worktree remove $WORKTREE_DIR
    rm -rf $NSS_DIST_DIR

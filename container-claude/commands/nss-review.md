@@ -73,8 +73,10 @@ if [ -d "$WORKTREE_DIR" ]; then
   echo "Reusing existing worktree: $WORKTREE_DIR"
 else
   echo "Creating worktree: $WORKTREE_DIR"
-  git -C /workspaces/nss-dev/nss worktree add --detach "$WORKTREE_DIR" \
-    || git -C /workspaces/nss-dev/nss worktree add --force --detach "$WORKTREE_DIR"
+  git -C /workspaces/nss-dev/nss worktree add --detach "$WORKTREE_DIR"
+  # If this fails, do NOT use --force blindly — it may reuse a worktree with
+  # a different HEAD than expected. Diagnose the error first (e.g., stale
+  # worktree entry: run `git worktree prune` then retry).
 fi
 
 NSS_DIR=$WORKTREE_DIR
@@ -106,8 +108,11 @@ echo "Patch file: $PATCH_FILE ($(wc -l < $PATCH_FILE) lines)"
 
 Also check whether a bug folder exists for additional context (summaries, Bugzilla attachments):
 ```sh
-BUG_DIR=/workspaces/nss-dev/bugs/$BUGNUM
-if [ -d "$BUG_DIR" ]; then
+BUG_DIR=""
+for d in /workspaces/nss-dev/bugs/$BUGNUM /workspaces/nss-dev/bugs/bug-$BUGNUM; do
+  [ -d "$d" ] && BUG_DIR="$d" && break
+done
+if [ -n "$BUG_DIR" ]; then
   echo "Bug context available at $BUG_DIR"
   ls "$BUG_DIR"
 else
@@ -117,14 +122,36 @@ fi
 
 **Bug-number mode** — find patch files in the attachments folder:
 ```sh
-ATTACH_DIR=/workspaces/nss-dev/bugs/$BUGNUM/attachments
-ls "$ATTACH_DIR"/*.diff "$ATTACH_DIR"/*.patch 2>/dev/null \
-  || { echo "ERROR: no .diff or .patch files found in $ATTACH_DIR"; exit 1; }
+BUG_DIR=""
+for d in /workspaces/nss-dev/bugs/$BUGNUM /workspaces/nss-dev/bugs/bug-$BUGNUM; do
+  [ -d "$d" ] && BUG_DIR="$d" && break
+done
+if [ -z "$BUG_DIR" ]; then
+  echo "ERROR: no bug folder found for $BUGNUM"
+  exit 1
+fi
 
-# Combine all patch files into a single canonical diff for later phases.
-PATCH_FILE=/tmp/review-$BUGNUM.diff
-cat "$ATTACH_DIR"/*.diff "$ATTACH_DIR"/*.patch 2>/dev/null > "$PATCH_FILE"
-echo "Patch file: $PATCH_FILE"
+ATTACH_DIR=$BUG_DIR/attachments
+PATCHES=$(ls "$ATTACH_DIR"/*.diff "$ATTACH_DIR"/*.patch 2>/dev/null)
+if [ -z "$PATCHES" ]; then
+  echo "ERROR: no .diff or .patch files found in $ATTACH_DIR"
+  exit 1
+fi
+echo "$PATCHES"
+
+# If there is a single patch file, use it directly. If there are multiple,
+# list them and let the reviewer inspect each individually — blindly
+# concatenating patches can produce a malformed diff if they overlap.
+PATCH_COUNT=$(echo "$PATCHES" | wc -l)
+if [ "$PATCH_COUNT" -eq 1 ]; then
+  PATCH_FILE=$PATCHES
+else
+  echo "WARNING: $PATCH_COUNT patch files found — review each for overlap before combining."
+  echo "Concatenating in filesystem order. Verify the combined diff is well-formed."
+  PATCH_FILE=/tmp/review-$BUGNUM.diff
+  cat $PATCHES > "$PATCH_FILE"
+fi
+echo "Patch file: $PATCH_FILE ($PATCH_COUNT file(s))"
 ```
 
 ---
@@ -136,6 +163,21 @@ echo "Patch file: $PATCH_FILE"
 Read the full diff at `$PATCH_FILE`. Internally note the files changed, subsystems affected, and relevant test suites — you need these to drive later phases. Save detailed file lists for the final report.
 
 Note which subsystems are touched (e.g., TLS, certificates, PKCS, hashing, DTLS) — you will use this in Phase 8 to select fuzz targets from the actual inventory. Do not pre-judge which fuzzers are relevant without listing them first.
+
+**Determine the test suite(s)** for the affected subsystem(s). Match changed files to the correct gtest script:
+- `lib/ssl/` → `ssl_gtests/ssl_gtests.sh`
+- `lib/pk11wrap/` → `pk11_gtests/pk11_gtests.sh`
+- `lib/certdb/` → `certdb_gtests/certdb_gtests.sh`
+- `lib/mozpkix/` → `mozpkix_gtests/mozpkix_gtests.sh`
+- `lib/util/` (DER/encoding) → `der_gtests/der_gtests.sh`
+- `lib/freebl/` → `freebl_gtests/freebl_gtests.sh`
+- `lib/softoken/` → `softoken_gtests/softoken_gtests.sh`
+- `lib/smime/` → `smime_gtests/smime_gtests.sh`
+- Check `ls $NSS_DIR/tests/` for additional suites if the above don't match.
+
+Set `GTEST_SCRIPT` to the matching script path (e.g., `ssl_gtests/ssl_gtests.sh`). If tests span multiple suites, note all of them. All subsequent phases use `$GTEST_SCRIPT` to run the correct suite.
+
+Also determine the `./mach test-coverage --test` argument. This is typically the suite name without the `_gtests` suffix and `_sh` suffix of the script — e.g., `ssl_gtests` for `ssl_gtests/ssl_gtests.sh`. Set `COVERAGE_SUITE` accordingly.
 
 If a `bugs/$BUGNUM/index.md` or similar summary file exists, read it. Treat it as **context**, not **truth** — note any claims it makes that you will need to verify.
 
@@ -156,6 +198,31 @@ Read the patched code and determine whether the fix **actually resolves the root
 - **Scope creep**: Does the patch include changes unrelated to the bug fix that might introduce risk?
 
 Output a 1-2 sentence summary of what the patch does, plus a note if your understanding of the bug diverges from the author's.
+
+### 1d. Patch quality: simplicity, minimality, and clarity
+
+Evaluate the patch against these criteria:
+
+**Minimality** — Does the patch contain only what is necessary to fix the bug? Flag:
+- Unrelated refactoring, style changes, or whitespace cleanup in lines not affected by the fix
+- "While I'm here" additions — extra validation, logging, or hardening beyond what the bug requires
+- Dead code removal or variable renames that are not needed for the fix
+
+**Simplicity** — Is the approach straightforward? Flag:
+- Overly clever solutions when a simpler one exists (e.g., a complex state machine change when a bounds check suffices)
+- Unnecessary indirection or abstraction added for a single use site
+
+**Clarity** — Is the code self-explanatory? Flag:
+- Verbose or explanatory comments that restate what the code already says (e.g., `/* check if length is zero */ if (len == 0)`)
+- Bug-specific comments that belong in the commit message, not in code (e.g., `/* Bug 1234567: this was missing */` or `/* Fixed: the length was not checked */`)
+- Comments that explain "why the old code was wrong" — the commit message is the right place for that context
+
+**Commit messages** — Check commit messages against NSS convention (`Bug NNNNNN - Short imperative description r=#nss-reviewers`). Flag:
+- Overly verbose first lines (should be under ~72 characters)
+- Multi-paragraph commit bodies that repeat what the diff shows — the body should explain *why*, not *what*, and only when the diff is not self-explanatory
+- Attribution trailers (Co-Authored-By, etc.) which NSS does not use
+
+Record any issues for the final report under a **Patch Quality** subsection.
 
 ---
 
@@ -187,13 +254,31 @@ Examine any new or modified test cases in the patch. For each, answer:
 2. **Does it verify the correct behaviour under the fix?** (e.g., returns an error code, does not crash, produces expected output)
 3. **Does it cover the related concerns from 2b?** If not, note which concerns remain untested.
 
+**2d. Test quality: suitability, redundancy, and abstraction level.**
+
+Evaluate the tests themselves for quality, independent of coverage:
+
+**Abstraction level** — Tests should prefer exercising public APIs and high-level functions over reaching into internal implementation details. Flag:
+- Tests that call internal/static helper functions when the same behavior could be validated through a public API (e.g., `PK11_*`, `SEC_*`, `CERT_*`, `SSL_*`, or the gtest connection harness)
+- Tests that depend on internal struct layout, private constants, or implementation-specific state that could change without affecting correctness
+- Exception: if the bug is specifically in an internal function with no observable effect at the public API level, a targeted internal test is acceptable — note this when it applies
+
+**Redundancy** — Tests should not duplicate existing coverage. Flag:
+- New tests that are substantially identical to existing tests in the same suite (same setup, same assertions, different only in name)
+- Multiple test cases that exercise the same code path with trivially different inputs when one case suffices
+- Tests that re-verify behavior already covered by existing tests unless the patch changes that behavior
+
+**Suitability** — Tests should be appropriate for what they are validating. Flag:
+- Tests that assert on incidental behavior rather than the specific fix (e.g., checking the full error string instead of the error code)
+- Verbose test code with excessive comments explaining the test — the test name and structure should make the intent clear
+
 Produce a short verdict:
 - **Tests adequate** — the critical path and key variants are tested.
 - **Tests partially adequate** — the critical path is tested but [specific gaps].
 - **Tests inadequate** — the tests do not exercise the actual trigger condition, or no tests are provided for a security-relevant fix.
 - **No tests provided** — note whether tests are expected (security fix → tests strongly expected; trivial refactor → may be acceptable).
 
-Record this verdict and the gaps (if any) for the final report. Do not block the review on this — it is an assessment, not a gate.
+Record this verdict, the quality assessment, and any gaps for the final report. Do not block the review on this — it is an assessment, not a gate.
 
 ---
 
@@ -269,14 +354,14 @@ This phase verifies that any new test cases in the patch actually test the bug b
 
 **Only run this phase if the patch adds new gtest test cases.**
 
-3a. Determine the state of the working tree:
+4a. Determine the state of the working tree:
 
 **Worktree mode** — patches are already committed; the working tree should be clean.
 To test unfixed code, temporarily check out the base commit, then restore:
 ```sh
 PATCHED_HEAD=$(git -C "$NSS_DIR" rev-parse HEAD)
 git -C "$NSS_DIR" checkout "$BASE"
-# → proceed to step 3b
+# → proceed to step 4b
 # After testing, restore with: git -C "$NSS_DIR" checkout $PATCHED_HEAD
 ```
 
@@ -284,33 +369,47 @@ git -C "$NSS_DIR" checkout "$BASE"
 ```sh
 git -C "$NSS_DIR" status
 ```
-- **Clean working tree**: proceed to step 3b directly.
+- **Clean working tree**: proceed to step 4b directly.
 - **Dirty working tree** (patches already applied): stash all changes, then apply only the test-addition patch(es) — i.e. the patch file(s) that only add new test cases without modifying production code:
   ```sh
   git -C "$NSS_DIR" stash
   git -C "$NSS_DIR" apply /path/to/test-only-patch.diff
   ```
 
-3b. Build NSS (standard build):
+4b. Build NSS (standard build):
 ```sh
 cd "$NSS_DIR"
 NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh 2>&1 | tail -20
 ```
 
-3c. Extract new test names programmatically from the patch diff, then run them in a single invocation:
+4c. Extract new test names programmatically from the patch diff, then run them in a single invocation:
 ```sh
+# Extract test names from TEST, TEST_F, and TEST_P macros
 GTESTFILTER=$(grep -E '^\+\s*TEST(_F|_P)?\(' "$PATCH_FILE" \
   | sed -E 's/.*TEST(_F|_P)?\(([^,]+),\s*([^)]+)\).*/\2.\3/' \
   | paste -sd ':')
+
+# Fallback: if no TEST macros found (e.g., tests defined via other macros or
+# INSTANTIATE_TEST_SUITE_P), search for new test class/function names more broadly
+if [ -z "$GTESTFILTER" ]; then
+  GTESTFILTER=$(grep -E '^\+.*(INSTANTIATE_TEST_SUITE_P|TYPED_TEST)\(' "$PATCH_FILE" \
+    | sed -E 's/.*\(([^,]+),\s*([^)]+)\).*/\2.\1*/' \
+    | paste -sd ':')
+fi
+
+# If still empty, warn — manual GTESTFILTER may be needed
+if [ -z "$GTESTFILTER" ]; then
+  echo "WARNING: Could not extract test names from patch. Set GTESTFILTER manually."
+fi
+
 echo "GTESTFILTER=$GTESTFILTER"
 
 cd "$NSS_DIR/tests"
 HOST=localhost DOMSUF=localdomain USE_64=1 DIST="$NSS_DIST_DIR" \
-  GTESTFILTER="$GTESTFILTER" bash ssl_gtests/ssl_gtests.sh 2>&1 \
+  GTESTFILTER="$GTESTFILTER" bash $GTEST_SCRIPT 2>&1 \
   | tee /tmp/pre-patch-run.log | tail -15
 grep -E "^\[  FAILED  \]|: Failure$|Expected|Which is:" /tmp/pre-patch-run.log | head -30
 ```
-For other gtest suites, use the appropriate script under `$NSS_DIR/tests/`.
 
 After testing, restore the patched state:
 - **Worktree mode**: `git -C "$NSS_DIR" checkout $PATCHED_HEAD`
@@ -378,9 +477,12 @@ The relevant tests are those identified in Phase 1; for ssl_gtest use a `GTESTFI
 **Build with both sanitizers:**
 ```sh
 cd "$NSS_DIR"
-NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh -c --ubsan --asan 2>&1 | tail -30
+NSS_DIST_DIR="$NSS_DIST_DIR" ./build.sh -c --ubsan --asan 2>&1 | tee /tmp/sanitizer-build.log | tail -30
+if [ ${PIPESTATUS[0]} -ne 0 ]; then
+  echo "BUILD FAILED — see /tmp/sanitizer-build.log"
+fi
 ```
-If the build succeeds cleanly, say "Build OK." Only show output on failure or warnings in changed files.
+If the build fails, diagnose the error before proceeding — running tests against stale binaries produces misleading results. If the build succeeds cleanly, say "Build OK." Only show output on failure or warnings in changed files.
 
 **Run relevant tests** (reuse the `GTESTFILTER` extracted in Phase 4, or extract it now if Phase 4 was skipped):
 ```sh
@@ -392,7 +494,7 @@ fi
 
 cd "$NSS_DIR/tests"
 HOST=localhost DOMSUF=localdomain USE_64=1 DIST="$NSS_DIST_DIR" \
-  GTESTFILTER="$GTESTFILTER" bash ssl_gtests/ssl_gtests.sh 2>&1 \
+  GTESTFILTER="$GTESTFILTER" bash $GTEST_SCRIPT 2>&1 \
   | tee /tmp/post-patch-run.log | tail -15
 grep -E "^\[  FAILED  \]|: Failure$|Expected|Which is:" /tmp/post-patch-run.log | head -30
 ```
@@ -432,18 +534,22 @@ If no crashes are found, say "No crashes (Xk exec/s)." Only report detail on cra
 
 Use `./mach test-coverage` for unit-test line coverage. Do not attempt to pass coverage flags directly to `build.sh` — that approach does not work.
 
-**Run coverage and capture the LCOV path:**
+**Run coverage and capture the LCOV path.** Use the `$COVERAGE_SUITE` determined in Phase 1a:
 ```sh
 cd "$NSS_DIR"
-./mach test-coverage --test ssl_gtests 2>&1 | tee /tmp/coverage-run.log | tail -10
+./mach test-coverage --test $COVERAGE_SUITE 2>&1 | tee /tmp/coverage-run.log | tail -10
 LCOV_FILE=$(grep "Coverage LCOV data:" /tmp/coverage-run.log | awk '{print $NF}')
 echo "LCOV: $LCOV_FILE"
 ```
 
 **Use diff-cover to focus on lines changed by the patch:**
 ```sh
-mkdir -p /workspaces/nss-dev/bugs/$BUGNUM
-COVERAGE_REPORT=/workspaces/nss-dev/bugs/$BUGNUM/coverage-report.html
+# Use $BUG_DIR if already resolved, otherwise create under the standard path
+if [ -z "$BUG_DIR" ]; then
+  BUG_DIR=/workspaces/nss-dev/bugs/bug-$BUGNUM
+fi
+mkdir -p "$BUG_DIR"
+COVERAGE_REPORT=$BUG_DIR/coverage-report.html
 diff-cover "$LCOV_FILE" \
   --diff-file "$PATCH_FILE" \
   --html-report "$COVERAGE_REPORT" \
@@ -467,9 +573,12 @@ date -u +%s
 ```
 Calculate elapsed wall-clock time from the start time recorded before Phase 0.
 
-Write the report to `/workspaces/nss-dev/bugs/$BUGNUM/review.md`. Create the directory if it does not exist:
+Write the report to `$BUG_DIR/review.md`. Create the directory if it does not exist:
 ```sh
-mkdir -p /workspaces/nss-dev/bugs/$BUGNUM
+if [ -z "$BUG_DIR" ]; then
+  BUG_DIR=/workspaces/nss-dev/bugs/bug-$BUGNUM
+fi
+mkdir -p "$BUG_DIR"
 ```
 
 Report format:
@@ -488,10 +597,17 @@ Report format:
 **Trigger**: [1 sentence — e.g., malformed SNI extension with zero-length hostname]
 **Security impact**: [None / Low / Medium / High — with brief justification]
 
+## Patch Quality
+
+**Minimality**: [Clean / issues noted]
+**Clarity**: [Clean / issues noted]
+**Commit messages**: [OK / issues noted]
+
 ## Test Adequacy
 
 **Verdict**: [Tests adequate / Tests partially adequate / Tests inadequate / No tests provided]
 **Gaps**: [Specific untested scenarios, or "None"]
+**Quality**: [Abstraction level, redundancy, or suitability issues, or "No issues"]
 **Related concerns**: [Security-relevant sibling issues identified in Phase 2, or "None"]
 
 ## Falsification
@@ -510,6 +626,7 @@ Report format:
 
 | Phase | Result |
 |---|---|
+| Patch quality | Clean / [detail if issues] |
 | Test adequacy | [Verdict from Phase 2] |
 | Falsification | [N hypotheses tested: N refuted, N confirmed, N inconclusive] |
 | clang-format | No issues / [detail if problems] |

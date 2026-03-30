@@ -157,9 +157,9 @@ Run clang-tidy with checks relevant to the defect class. This requires `compile_
 ```sh
 cd /workspaces/nss-dev/nss
 
-# Generate compile_commands.json if needed
+# Generate compile_commands.json if needed (use a dedicated dist dir to avoid clobbering)
 if [ ! -f compile_commands.json ]; then
-  bear -- ./build.sh 2>&1 | tail -5
+  NSS_DIST_DIR=/workspaces/nss-dev/dist-systemize bear -- ./build.sh 2>&1 | tail -5
 fi
 
 # Choose checks based on defect class. Examples:
@@ -183,7 +183,7 @@ Adjust the `-checks` flag and target directories to match the defect class. Reco
 
 ### Strategy E: Compiler warnings
 
-Build with aggressive warnings to catch related issues:
+NSS uses gyp/ninja, so you cannot pass extra `-W` flags directly to `build.sh`. Instead, compile individual files directly with extra warning flags to check for related issues:
 
 ```sh
 cd /workspaces/nss-dev/nss
@@ -194,15 +194,43 @@ cd /workspaces/nss-dev/nss
 # Format string: -Wformat-security
 # General: -Wextra -Wconversion
 
-# Build just the relevant library with extra warnings
-# (This is a targeted check — not a full rebuild)
-NSS_DIST_DIR=/workspaces/nss-dev/dist ./build.sh 2>&1 \
+EXTRA_WARNINGS="-Wsign-compare -Wconversion"  # adjust for defect class
+
+# First, generate compile_commands.json if not present (needed for correct flags)
+if [ ! -f compile_commands.json ]; then
+  bear -- ./build.sh 2>&1 | tail -5
+fi
+
+# Compile individual files from the relevant subdirectory with extra warnings.
+# Extract the original compile command from compile_commands.json and add flags.
+for f in lib/ssl/*.c; do  # adjust directory to match search scope
+  clang -fsyntax-only $EXTRA_WARNINGS \
+    $(python3 -c "
+import json, sys
+db = json.load(open('compile_commands.json'))
+for e in db:
+    if e['file'].endswith('/$f'):
+        # Extract include paths and defines from the original command
+        parts = e['command'].split()
+        print(' '.join(p for p in parts if p.startswith(('-I','-D','-isystem'))))
+        break
+" 2>/dev/null) \
+    "$f" 2>&1
+done | grep -E "warning:" | tee /tmp/compiler-warnings.txt
+
+# Filter for findings related to our defect class
+grep -i "keyword_related_to_defect" /tmp/compiler-warnings.txt
+```
+
+If `compile_commands.json` generation fails or the approach above is too noisy, fall back to scanning the default build output for warnings in the relevant files:
+```sh
+NSS_DIST_DIR=/workspaces/nss-dev/dist-systemize ./build.sh 2>&1 \
   | grep -E "warning:" \
   | grep -i "keyword_or_directory" \
   | tee /tmp/compiler-warnings.txt
 ```
 
-If a targeted extra-warnings build is feasible (e.g., adding `-Wsign-compare` to one library's build flags), do that instead of relying on the default build. Record relevant warnings.
+Record relevant warnings.
 
 ### Strategy F: Manual code inspection
 
@@ -313,12 +341,12 @@ date -u +%s
 ```
 Calculate elapsed wall-clock time from the start time recorded before Phase 0.
 
-Create the directory if needed:
+Create the directory if needed. Use `$BUG_DIR` resolved in Phase 0b:
 ```sh
-mkdir -p /workspaces/nss-dev/bugs/$BUGNUM
+mkdir -p "$BUG_DIR"
 ```
 
-Write the report to `/workspaces/nss-dev/bugs/$BUGNUM/bigger-picture.md`:
+Write the report to `$BUG_DIR/bigger-picture.md`:
 
 ```
 # NSS Bug <BUGNUM> — Systemic Analysis

@@ -35,6 +35,7 @@ Locate the bug folder. Check both `/workspaces/nss-dev/bugs/$BUGNUM/` and `/work
 Once located, set `BUG_DIR` to the path and read everything available:
 - `index.md` or any markdown summary — read in full
 - All files in `attachments/` — read patches, test cases, crash logs, stack traces
+- Any existing reports (`bugfix-report.md`, `bigger-picture.md`, `review.md`) — these contain prior analysis that saves re-deriving the defect class and code paths
 - If multiple bugs were given, read all of them
 
 ### 0c. Summarize the reported problem
@@ -49,7 +50,7 @@ After reading, produce a concise internal summary:
 
 ## Phase 1: Understand the Vulnerable Code
 
-Read the actual source code in `/workspaces/nss-dev/nss/` to confirm and deepen your understanding.
+Read the actual source code in `/workspaces/nss-dev/nss/` to confirm and deepen your understanding. Triage is a read-only analysis — reading from the main checkout is safe here. No worktree is needed unless you need to build or modify code.
 
 ### 1a. Locate the defect site
 
@@ -177,12 +178,12 @@ date -u +%s
 ```
 Calculate elapsed wall-clock time from the start time recorded before Phase 0.
 
-Create the directory if needed:
+Create the directory if needed. Use `$BUG_DIR` resolved in Phase 0b:
 ```sh
-mkdir -p /workspaces/nss-dev/bugs/$BUGNUM
+mkdir -p "$BUG_DIR"
 ```
 
-Write the report to `/workspaces/nss-dev/bugs/$BUGNUM/triage-report.md`:
+Write the report to `$BUG_DIR/triage-report.md`:
 
 ```
 # NSS Bug <BUGNUM> — Triage Report
