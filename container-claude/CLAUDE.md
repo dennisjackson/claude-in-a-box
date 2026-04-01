@@ -128,6 +128,12 @@ on them (e.g., posting a comment to Bugzilla).
 - **bear** — generate `compile_commands.json` for IDE integration: `bear -- ./build.sh`
 - **lcov** — code coverage
 - **diff-cover** — coverage focused on lines changed by a patch/diff
+- **searchfox-cli** — query Mozilla's Searchfox code search from the CLI (e.g. `searchfox query "SSLHashType" --repo mozilla-central`)
+- **angr** — binary analysis framework for symbolic execution and reverse engineering
+- **tlslite-ng** — pure-Python TLS implementation, useful for interop testing against NSS
+- **z3** — SMT solver for constraint reasoning over bit-vectors, modular arithmetic, etc.
+- **afl-fuzz** (AFL++) — coverage-guided fuzzer, complements the built-in libFuzzer support
+- **semgrep** — pattern-based static analysis; write custom rules for crypto antipatterns
 
 ## Running Tests
 

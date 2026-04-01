@@ -97,6 +97,33 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 RUN cargo install weggli \
     && weggli --version
 
+# Install searchfox-cli (query Mozilla's Searchfox code search from CLI)
+RUN cargo install searchfox-cli \
+    && searchfox --help > /dev/null
+
+# angr — binary analysis framework
+RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install angr
+
+# tlslite-ng — pure-Python TLS implementation (for NSS interop testing)
+RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install tlslite-ng
+
+# Z3 — SMT solver (constraint reasoning over bit-vectors, modular arithmetic)
+RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
+    && apt-get -y install --no-install-recommends z3 libz3-dev \
+    && apt-get autoremove -y && apt-get clean -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && z3 --version
+
+# AFL++ — coverage-guided fuzzer
+RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
+    && apt-get -y install --no-install-recommends afl++ \
+    && apt-get autoremove -y && apt-get clean -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && afl-fuzz --version || true
+
+# semgrep — pattern-based static analysis
+RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install semgrep
+
 # Install Claude Code
 RUN npm install -g @anthropic-ai/claude-code \
     && claude --version
