@@ -217,6 +217,23 @@ Evaluate the patch against these criteria:
 
 Record any issues for the final report under a **Patch Quality** subsection.
 
+### 1e. Platform portability
+
+NSS builds and runs on Linux, macOS, Windows, FreeBSD, and others, on both 32-bit and 64-bit architectures (x86, x64, ARM, AArch64). Both the fix and the tests must be portable. Review all changed files for:
+
+**Fix code:**
+- **Integer width assumptions**: `int`, `long`, and pointer sizes vary across platforms. `long` is 32-bit on Windows LLP64 even on 64-bit builds. Prefer `PRUint32`, `PRInt32`, `size_t`, `PRUintn` or explicit fixed-width types over bare `int`/`long` for values that could exceed 32 bits or where width matters. Flag any arithmetic that is only correct on LP64 (where `long` is 64-bit).
+- **Signed/unsigned mismatch**: Implicit conversions between signed and unsigned types may behave differently when widths change across platforms.
+- **Pointer-size assumptions**: Code that casts between pointers and integers, or assumes `sizeof(void*) == 8`.
+- **Platform-specific APIs in library code**: POSIX-only calls (`mmap`, `unistd.h` functions, etc.) in code that should be cross-platform. NSS library code uses NSPR abstractions (`PR_*`) for portability.
+
+**Test code:**
+- **OS-specific headers**: `<sys/mman.h>`, `<unistd.h>`, `<windows.h>`, etc. without `#ifdef` guards. Tests using POSIX-only APIs (e.g., `mmap`, `fork`) need `#if !defined(_WIN32)` or equivalent guards.
+- **Architecture-specific assumptions**: Tests that assume 64-bit address space (e.g., allocating >2 GB), 64-bit `size_t`, specific endianness, or specific alignment. Guard with `sizeof(void*)` checks or `GTEST_SKIP()` on unsupported platforms.
+- **Resource assumptions**: Tests requiring large amounts of memory (>1 GB) should be guarded so they skip gracefully on constrained environments rather than crashing.
+
+Flag any portability issues for the final report under **Issues**. If the fix code has portability problems, this is a correctness issue. If only the test has portability problems, note it as a quality issue that should be fixed before landing.
+
 ---
 
 ## Phase 2: Test Adequacy Analysis
@@ -624,6 +641,7 @@ Report format:
 | Phase | Result |
 |---|---|
 | Patch quality | Clean / [detail if issues] |
+| Platform portability | Clean / [detail if issues — list affected platforms] |
 | Test adequacy | [Verdict from Phase 2] |
 | Falsification | [N hypotheses tested: N refuted, N confirmed, N inconclusive] |
 | clang-format | No issues / [detail if problems] |

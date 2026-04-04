@@ -238,6 +238,23 @@ done
 ```
 Fix any formatting issues before proceeding.
 
+### 3d. Check platform portability
+
+NSS builds and runs on Linux, macOS, Windows, FreeBSD, and others, on both 32-bit and 64-bit architectures (x86, x64, ARM, AArch64). Review all changes (fix **and** test code) for portability issues. Fix any you find before proceeding.
+
+**Fix code — check for:**
+- **Integer width assumptions**: `long` is 32-bit on Windows LLP64 even in 64-bit builds. Prefer `PRUint32`, `PRInt32`, `size_t`, or explicit fixed-width types over bare `int`/`long` for values where width matters. Flag any arithmetic that is only correct on LP64.
+- **Signed/unsigned mismatch**: Implicit conversions between signed and unsigned types that behave differently when widths change.
+- **Pointer-size assumptions**: Casts between pointers and integers, or code that assumes `sizeof(void*) == 8`.
+- **Platform-specific APIs in library code**: POSIX-only calls (`mmap`, `unistd.h` functions) in cross-platform code. NSS uses NSPR abstractions (`PR_*`) for portability.
+
+**Test code — check for:**
+- **OS-specific headers**: `<sys/mman.h>`, `<unistd.h>`, `<windows.h>`, etc. must be guarded with `#if !defined(_WIN32)` or equivalent. Wrap the entire test body in the same guard if it depends on those APIs.
+- **Architecture-specific assumptions**: Tests assuming 64-bit address space (allocating >2 GB), 64-bit `size_t`, specific endianness, or alignment. Use `GTEST_SKIP()` with a `sizeof(void*)` check for tests that cannot run on 32-bit.
+- **Resource assumptions**: Tests requiring >1 GB of memory should skip gracefully (e.g., check `mmap` return value, use `GTEST_SKIP()`) rather than crashing on constrained environments.
+
+If portability issues are found, fix them now — do not leave them for the reviewer to catch.
+
 ---
 
 ## Phase 4: Verify the Fix
@@ -405,6 +422,7 @@ Write the report to `$REPORTS_DIR/bugfix-report.md`:
 | Check | Result |
 |---|---|
 | Reproducer passes | [Yes / No] |
+| Platform portability | [Clean / issues fixed — describe] |
 | Sanitizers (UBSan+ASan) | [Clean / findings] |
 | Regression tests | [Pass / failures] |
 | Fuzzing | [N/A / Clean / findings] |
