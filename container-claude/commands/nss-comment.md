@@ -1,6 +1,6 @@
 ---
 name: nss-comment
-description: Generate a proposed Bugzilla comment for a security bug. Reads all reports, existing Bugzilla comments, the LOG, and worktree state, then drafts a terse comment cataloguing new insights and progress. Use when the user says "/nss-comment BUGNUM" or similar.
+description: Generate a proposed Bugzilla comment for a security bug. Reads all context, then drafts a minimal comment containing only genuine new insight (not status updates or fix descriptions). Use when the user says "/nss-comment BUGNUM" or similar.
 version: 1.0.0
 ---
 
@@ -99,16 +99,20 @@ git -C /workspaces/nss-dev/.nss-exchange.git log --oneline -10 <branch-name>
 
 ## Phase 2: Determine What's New
 
-Compare the existing Bugzilla comments (`input/comments.md`) against the reports, log, and worktree state. Identify what information is **new** — i.e., not already present in the Bugzilla thread.
+Compare the existing Bugzilla comments (`input/comments.md`) against the reports, log, and worktree state. Identify **only genuinely new insight** — information that changes understanding of the bug, narrows/widens the attack surface, or corrects something in the original report.
 
-New information typically falls into these categories:
+Things that count as new insight:
+- Corrections to the original root cause or severity assessment
+- Attack surface changes (paths that are/aren't reachable, configurations that matter)
+- Surprising constraints or mitigations not mentioned in the original report
+- Systemic findings — the same pattern exists elsewhere
 
-1. **Triage findings** — confirmed severity, exploitability assessment, attack surface analysis
-2. **Root cause analysis** — if deeper than what the original report provided
-3. **Fix status** — a patch exists, what it does, test results
-4. **Review results** — patch was reviewed, sanitizer results, fuzzing results
-5. **Systemic findings** — related patterns found elsewhere in the codebase
-6. **Scope refinements** — narrowing or widening the attack surface, correcting earlier assessments
+Things that are **NOT** new insight (do not include these):
+- Confirming what the report already says (e.g., "confirmed sec-high" when it's already tagged sec-high)
+- Restating the root cause that Comment 0 already explained
+- Generic status updates ("patch available", "tests pass", "sanitizers clean") — the reviewer can see the patch on Phabricator
+- Fix approach descriptions — the reviewer will read the diff
+- Test methodology or verification details
 
 If there is **nothing new** beyond what the Bugzilla thread already contains, **stop and tell the user** there is nothing to comment on.
 
@@ -129,36 +133,16 @@ If nothing is ambiguous, proceed directly to Phase 4.
 
 ## Phase 4: Draft the Comment
 
-Write a Bugzilla comment that is:
+The comment should be **as short as possible**. A good Bugzilla comment on a security bug is often 2-5 sentences. It contains only what changes the reader's understanding.
 
-- **Terse.** Bugzilla security bug comments should be concise and to the point. No preamble, no filler.
-- **Structured.** Use short labeled sections only where they aid clarity. Don't over-structure a comment that's only a few sentences.
-- **Factual.** State findings, not opinions. Cite specific functions, files, and line numbers where relevant.
-- **Incremental.** Only cover what's new since the last Bugzilla comment. Don't restate the bug report or prior analysis.
-- **Appropriate for the audience.** Mozilla security engineers who know NSS. Don't explain what ASAN is or how TLS works.
+### Rules
 
-### Comment structure guidelines
-
-For a **triage-only** update (no fix yet):
-- Confirmed severity and why (one sentence)
-- Key findings that refine the original report (attack surface, exploitability constraints, affected configurations)
-- Any scope changes (wider or narrower than initially reported)
-
-For a **fix available** update:
-- One-line summary of the fix approach
-- Test results (gtests pass, sanitizer-clean, fuzzing results if available)
-- Branch name where the patch lives
-- Any caveats or follow-up needed
-
-For a **combined triage + fix** update:
-- Brief severity confirmation
-- Fix summary
-- Test results
-- Branch name
-
-### Tone
-
-Match the tone of existing comments in `input/comments.md`. Typically direct and technical. No greetings, no sign-offs, no pleasantries. If existing comments use a particular style (e.g., bullet points vs. prose), match it.
+- **Only new insight.** Do not restate the root cause, confirm what's already known, or summarize the fix approach (the reviewer will read the diff). If the only "new" thing is that a patch exists, the comment is probably just one sentence pointing to it, or maybe not needed at all.
+- **No structure for short comments.** If the comment is under ~5 sentences, write it as plain prose. No headers, no bullet lists, no labeled sections.
+- **No generic status.** Do not mention that tests pass, sanitizers are clean, or fuzzing found nothing — unless a specific result is surprising or noteworthy (e.g., "fuzzing found a second variant" or "UBSan flagged an unrelated issue in the same function").
+- **No fix descriptions.** The reviewer reads the diff. Don't describe what the patch does unless there's a non-obvious design choice that needs justification.
+- **Audience.** Mozilla security engineers who know NSS. Never explain basics.
+- **Tone.** Match existing comments. Typically terse, direct, technical. No greetings or sign-offs.
 
 ---
 
