@@ -20,11 +20,19 @@ Skip any bugs in `bugs/finished/` — they are done and need no further action. 
 
 ## Step 2: For each bug, gather state
 
-For each bug directory, read:
-1. `input/bug.md` — extract the bug title/summary (first heading or title field). This is the one-line description.
-2. `LOG.md` — the full log. The **last entry** is the current state.
-3. Check which reports exist in `reports/` (e.g., `triage-report.md`, `analysis-report.md`, `bugfix-report.md`, `review.md`, `bigger-picture.md`).
-4. Check if `input/` exists and has content (bug was fetched).
+**IMPORTANT: Do all data gathering yourself using Read, Glob, Grep, and Bash tools directly. Do NOT delegate per-bug research to subagents — they may miss files or report incorrect results.**
+
+For each bug directory:
+1. Read `input/bug.md` — extract the bug title/summary (first heading or title field). This is the one-line description.
+2. Read `LOG.md` — the full log. The **last entry** is the current state.
+3. List reports that exist:
+   ```sh
+   ls /workspaces/nss-dev/bugs/BUGDIR/reports/ 2>/dev/null
+   ```
+4. Check if `input/` exists and has content:
+   ```sh
+   ls /workspaces/nss-dev/bugs/BUGDIR/input/ 2>/dev/null
+   ```
 5. Check if any exchange branches exist for this bug number:
    ```sh
    git -C /workspaces/nss-dev/.nss-exchange.git branch --list "*BUGNUM*" 2>/dev/null
@@ -33,6 +41,8 @@ For each bug directory, read:
    ```sh
    git -C /workspaces/nss-dev/nss worktree list | grep -i "BUGNUM" 2>/dev/null
    ```
+
+You can batch the `ls` and `git` commands for all bugs in parallel to be efficient.
 
 
 ## Step 3: Sanity checks
