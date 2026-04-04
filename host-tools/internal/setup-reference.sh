@@ -21,6 +21,19 @@ if [[ "${1:-}" == "--force" ]]; then
     FORCE=true
 fi
 
+# ── Skip if last sync was recent (< 8 hours) ────────────────────────
+STAMP="$REF_DIR/.last-sync"
+COOLDOWN=$((8 * 3600))
+
+if ! $FORCE && [[ -f "$STAMP" ]]; then
+    last=$(cat "$STAMP")
+    now=$(date +%s)
+    if (( now - last < COOLDOWN )); then
+        echo "==> Reference repos synced $(( (now - last) / 3600 ))h ago; skipping (use --force to override)."
+        exit 0
+    fi
+fi
+
 # ── Clone / update repos ────────────────────────────────────────────
 mkdir -p "$REF_DIR/repos"
 
@@ -54,5 +67,6 @@ while IFS= read -r line; do
     clone_or_update_repo "$line" &
 done < "$SOURCES"
 wait
+date +%s > "$STAMP"
 echo "    Done."
 echo "==> Reference directory ready."
