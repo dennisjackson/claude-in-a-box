@@ -2,7 +2,6 @@
 name: nss-triage
 description: Triage an NSS/NSPR bug for exploitability and impact. Use when the user says "/nss-triage BUGNUM", "triage bug XXXXX", or similar. Reads bug reports from bugs/, analyzes the vulnerable code, maps all triggering code paths and configurations, and writes a triage report.
 version: 1.0.0
-disable-model-invocation: true
 ---
 
 # NSS Bug Triage

@@ -2,7 +2,6 @@
 name: nss-systemize
 description: Find systemic instances of a bug pattern across NSS. Use when the user says "/nss-systemize BUGNUM", "systemize bug XXXXX", "find similar bugs", or similar. Reads bug reports from bugs/, understands the defect class, then searches the entire codebase for the same pattern using grep, weggli, cppcheck, clang-tidy, and compiler warnings. Writes a report of all candidate locations.
 version: 1.0.0
-disable-model-invocation: true
 ---
 
 # NSS Systemic Bug Search

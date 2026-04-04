@@ -2,7 +2,6 @@
 name: nss-bugfix
 description: Investigate and fix an NSS/NSPR bug. Use when the user says "/nss-bugfix BUGNUM", "fix bug XXXXX", or similar. Reads bug reports from bugs/, writes a reproducer (gtest or fuzzer), develops a minimal fix, verifies it, and checks for systemic variants.
 version: 1.0.0
-disable-model-invocation: true
 ---
 
 # NSS Bug Fix

@@ -2,7 +2,6 @@
 name: nss-review
 description: Review an NSS/NSPR bug patch. Use when the user says "/nss-review BUGNUM", "review bug XXXXX", "review patch for bug", "review patches in worktree <name>", or similar. Performs full patch validation including test verification, sanitizer builds, fuzzing, and coverage analysis.
 version: 2.0.0
-disable-model-invocation: true
 ---
 
 # NSS Bug Patch Review
