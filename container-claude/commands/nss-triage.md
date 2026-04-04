@@ -10,7 +10,7 @@ Triage bug: $ARGUMENTS
 
 Follow each phase below in order. Be terse: if a phase completes without issues, just record the outcome and move on. Only provide detail when something is ambiguous or needs the user's attention.
 
-**Report requirement**: You MUST write the report file when you complete the final phase. If the user continues the conversation and subsequent discussion reveals new information — corrections, additional triggering paths, revised severity, new understanding of exploitability — update the report file to reflect the current best understanding. The report should always represent the most accurate and complete picture available.
+**Report requirement**: You MUST write the report file when you complete the final phase. If the user continues the conversation and subsequent discussion reveals new information — corrections, additional triggering paths, revised severity, new understanding of exploitability — update the report file to reflect the current best understanding. The report should always represent the most accurate and complete picture available. Also append a new LOG.md entry summarizing what changed (e.g., `- <timestamp> — /nss-triage update: revised severity from High to Critical after confirming remote pre-auth path`).
 
 **Before starting**, record the wall-clock start time:
 ```sh

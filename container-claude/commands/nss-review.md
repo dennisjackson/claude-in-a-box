@@ -10,7 +10,7 @@ Review bug: $ARGUMENTS
 
 Follow each phase below in order. Be terse: if a phase completes without issues, just record "No issues" and move on. Only provide detail when something fails, looks suspicious, or needs the user's attention.
 
-**Report requirement**: You MUST write the report file when you complete the final phase. If the user continues the conversation and subsequent discussion reveals new information — corrections, additional findings, revised verdict, missed issues — update the report file to reflect the current best understanding. The report should always represent the most accurate and complete picture available.
+**Report requirement**: You MUST write the report file when you complete the final phase. If the user continues the conversation and subsequent discussion reveals new information — corrections, additional findings, revised verdict, missed issues — update the report file to reflect the current best understanding. The report should always represent the most accurate and complete picture available. Also append a new LOG.md entry summarizing what changed (e.g., `- <timestamp> — /nss-review update: changed verdict to APPROVE after confirming edge case is handled`).
 
 **Skepticism principle**: Do not take bug descriptions, commit messages, comments, or patch rationale at face value. These are **claims** — they may be wrong, incomplete, or misleading (whether through honest error or adversarial intent). Your job is to independently verify that the patch is correct by reading the code, not by trusting the author's narrative. Specifically:
 - If the bug report says "X is the root cause," verify by reading the code that X is actually the root cause.
@@ -695,3 +695,14 @@ rm -rf "$NSS_DIST_DIR"
 ```
 
 In worktree mode the user owns the worktree; do not suggest removing it.
+
+---
+
+## Post-Review: Patch Changes
+
+If the conversation continues after the review and leads to changes to the patches (fixing issues found during review, addressing feedback, etc.), **ask the user which worktree to make the changes on** before editing any files. Present the options concisely:
+
+- **Original fix worktree** (e.g., `/workspaces/nss-dev/worktrees/fix-BUGNUM`) — this is usually the right choice, since it keeps the fix history in one place.
+- **Review worktree** (e.g., `/workspaces/nss-dev/worktrees/review-BUGNUM`) — only if the user prefers to keep the original fix untouched for comparison.
+
+Do not assume — ask, then make the changes on whichever worktree the user selects. After making changes, update `$NSS_DIR` and `$NSS_DIST_DIR` to point at the chosen worktree for any subsequent builds or test runs.

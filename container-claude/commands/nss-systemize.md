@@ -10,7 +10,7 @@ Systemize bug: $ARGUMENTS
 
 Follow each phase below in order. Be terse: if a phase completes without issues, just record the outcome and move on. Only provide detail when something is ambiguous or needs the user's attention.
 
-**Report requirement**: You MUST write the report file when you complete the final phase. If the user continues the conversation and subsequent discussion reveals new information — reclassified findings, new candidates, revised confidence levels, confirmed false positives — update the report file to reflect the current best understanding. The report should always represent the most accurate and complete picture available.
+**Report requirement**: You MUST write the report file when you complete the final phase. If the user continues the conversation and subsequent discussion reveals new information — reclassified findings, new candidates, revised confidence levels, confirmed false positives — update the report file to reflect the current best understanding. The report should always represent the most accurate and complete picture available. Also append a new LOG.md entry summarizing what changed (e.g., `- <timestamp> — /nss-systemize update: added 2 high-confidence findings in lib/pkcs7/, dropped 1 false positive`).
 
 **Before starting**, record the wall-clock start time:
 ```sh
