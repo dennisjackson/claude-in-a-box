@@ -131,5 +131,5 @@ RUN npm install -g @anthropic-ai/claude-code \
 # Create workspace directory for NSS development
 # Volume mount points must be owned by vscode before volumes are attached,
 # so that Docker preserves ownership when creating empty named volumes.
-RUN mkdir -p /workspaces/nss-dev /workspaces/nss-dev/nspr /workspaces/nss-dev/nss /workspaces/nss-dev/.ccache \
+RUN mkdir -p /workspaces/nss-dev /workspaces/nss-dev/nspr /workspaces/nss-dev/nss /workspaces/nss-dev/.ccache /workspaces/nss-dev/worktrees \
     && chown -R vscode:vscode /workspaces/nss-dev
