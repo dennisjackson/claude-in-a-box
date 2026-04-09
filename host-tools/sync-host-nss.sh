@@ -10,7 +10,7 @@ if [ ! -d "${HOST_NSS}/.git" ]; then
 fi
 
 echo "==> Fetching from exchange..."
-git -C "${HOST_NSS}" fetch exchange
+git -C "${HOST_NSS}" fetch --no-local exchange
 
 # Show what's available
 BRANCHES=$(git -C "${HOST_NSS}" branch -r --list 'exchange/*' 2>/dev/null)
