@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/devcontainers/cpp:1-ubuntu-22.04
+FROM mcr.microsoft.com/devcontainers/base:1-ubuntu-22.04
 
 # LLVM/Clang 18 — Ubuntu 22.04's packaged clang is too old (14) for sanitizer
 # builds. Install from the official LLVM apt repository.
