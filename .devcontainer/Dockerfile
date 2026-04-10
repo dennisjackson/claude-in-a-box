@@ -124,9 +124,12 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install semgrep
 
 # Homebrew (Linuxbrew) — used for packages not in Ubuntu repos
+# The installer refuses to run as root, so switch to vscode for this step.
+USER vscode
 RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
     && /home/linuxbrew/.linuxbrew/bin/brew install watchman \
     && /home/linuxbrew/.linuxbrew/bin/watchman version
+USER root
 
 ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"
 
