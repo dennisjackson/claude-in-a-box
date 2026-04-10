@@ -28,6 +28,11 @@ if [ ! -f "$PROJ_DIR/.envrc" ]; then
     "$PROJ_DIR/internal/setup-envrc.sh"
 fi
 
+# Source .envrc so variables are available to devcontainer up
+# (${localEnv:...} in devcontainer.json reads from this process's environment)
+# shellcheck disable=SC1091
+source "$PROJ_DIR/.envrc"
+
 # Check for a running container
 RUNNING=$(docker ps -q --filter "label=devcontainer.local_folder=$PROJ_DIR" 2>/dev/null || true)
 if [ -n "$RUNNING" ]; then

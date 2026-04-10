@@ -38,6 +38,7 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
         pipx \
         zlib1g-dev \
         libsqlite3-dev \
+        libgtk-3-dev \
         direnv \
         mercurial \
         perl \
