@@ -39,6 +39,7 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
         zlib1g-dev \
         libsqlite3-dev \
         libgtk-3-dev \
+        libasound2-dev \
         direnv \
         mercurial \
         perl \
