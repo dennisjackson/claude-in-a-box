@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-PROJ_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+PROJ_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Helper: run a command in the container as the vscode user
 cexec() { docker exec -u vscode "$CONTAINER_ID" "$@"; }
@@ -91,7 +91,7 @@ if [ -f "$PROJ_DIR/.envrc" ]; then
         fi
     done
 else
-    warn ".envrc not found — run host-tools/internal/setup-envrc.sh"
+    warn ".envrc not found — run internal/setup-envrc.sh"
 fi
 
 echo ""

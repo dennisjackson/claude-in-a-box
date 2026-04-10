@@ -3,7 +3,7 @@
 # Usage: connect.sh <project-dir>
 set -euo pipefail
 
-PROJ_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PROJ_DIR="$(cd "$(dirname "$0")" && pwd)"
 WS_FLAG="--workspace-folder $PROJ_DIR"
 
 if [ $# -lt 1 ]; then
@@ -18,7 +18,7 @@ export PROJECT_DIR
 # Ensure .envrc exists (needed for API keys passed into the container)
 if [ ! -f "$PROJ_DIR/.envrc" ]; then
     echo "==> No .envrc found — running setup..."
-    "$PROJ_DIR/host-tools/internal/setup-envrc.sh"
+    "$PROJ_DIR/internal/setup-envrc.sh"
 fi
 
 # Check for a running container

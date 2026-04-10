@@ -10,7 +10,8 @@ on the host and is bind-mounted into the container.
 | Path | Purpose |
 |---|---|
 | `.devcontainer/` | Dockerfile, devcontainer.json, seccomp profile, post-create script |
-| `host-tools/` | Scripts that run on the host (connect, nuke, status, envrc setup) |
+| `connect.sh`, `nuke.sh` | Top-level host scripts (connect to container, destroy it) |
+| `internal/` | Helper scripts (fresh-container, status, envrc setup) |
 | `.envrc` | Anthropic API key (not tracked in git) |
 
 ## How It Works
@@ -26,25 +27,22 @@ the container will pick up the project's CLAUDE.md and commands automatically.
 
 ## Host Tools
 
-- `host-tools/connect.sh <project-dir>` — mount the given project directory
-  into the dev container and connect. Creates the container on first use,
-  recreates it when switching projects. Auto-runs envrc setup if `.envrc` is
-  missing.
-- `host-tools/nuke.sh` — destroy the container and ccache volume (requires
-  typing "nuke").
-- `host-tools/internal/fresh-container.sh` — tear down and rebuild the dev
-  container.
-- `host-tools/internal/setup-envrc.sh` — interactively populate `.envrc` with
+- `connect.sh <project-dir>` — mount the given project directory into the dev
+  container and connect. Creates the container on first use, recreates it when
+  switching projects. Auto-runs envrc setup if `.envrc` is missing.
+- `nuke.sh` — destroy the container and ccache volume (requires typing "nuke").
+- `internal/fresh-container.sh` — tear down and rebuild the dev container.
+- `internal/setup-envrc.sh` — interactively populate `.envrc` with
   `ANTHROPIC_API_KEY`. Triggered automatically by `connect.sh` when `.envrc` is
   missing.
-- `host-tools/internal/status.sh` — report container state, ccache volume, and
+- `internal/status.sh` — report container state, ccache volume, and
   environment config.
 
 ## Workflow
 
 1. Set up a project folder on the host with source code, a CLAUDE.md, and
    optionally a `.claude/` commands directory.
-2. Connect: `host-tools/connect.sh /path/to/my-project`
+2. Connect: `./connect.sh /path/to/my-project`
 3. Claude Code is pre-installed and pre-configured inside. It sees the project
    folder contents at `/workspaces/project/`.
 4. All changes Claude makes are written directly to the host project folder.

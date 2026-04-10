@@ -27,7 +27,7 @@ Claude, and optionally a `.claude/commands/` directory with slash commands.
 ### 2. Connect to the container
 
 ```bash
-host-tools/connect.sh /path/to/my-project
+./connect.sh /path/to/my-project
 ```
 
 Builds the container on first run, then mounts your project folder and drops
@@ -49,17 +49,17 @@ host.
 
 | Script | Purpose |
 |--------|---------|
-| `host-tools/connect.sh <project-dir>` | Mount a project folder and connect to the container. |
-| `host-tools/nuke.sh` | Destroy container and ccache volume. Requires typing "nuke". |
-| `host-tools/internal/status.sh` | Report container state and environment config. |
-| `host-tools/internal/fresh-container.sh` | Tear down and rebuild the container. |
-| `host-tools/internal/setup-envrc.sh` | Set up `.envrc` with API key. |
+| `connect.sh <project-dir>` | Mount a project folder and connect to the container. |
+| `nuke.sh` | Destroy container and ccache volume. Requires typing "nuke". |
+| `internal/status.sh` | Report container state and environment config. |
+| `internal/fresh-container.sh` | Tear down and rebuild the container. |
+| `internal/setup-envrc.sh` | Set up `.envrc` with API key. |
 
 ## Container Contents
 
 The container includes Clang 18, ccache, gdb, valgrind, clang-tidy,
 clang-format, cppcheck, weggli, semgrep, lcov, diff-cover, AFL++, angr, Z3,
-searchfox-cli, git-cinnabar, Rust, and Claude Code.
+searchfox-cli, git-cinnabar, Rust, tlslite-ng, and Claude Code.
 
 ### Workspace layout
 

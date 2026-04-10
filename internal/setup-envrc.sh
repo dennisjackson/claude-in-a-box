@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-ENVRC="$(dirname "$0")/../../.envrc"
+ENVRC="$(dirname "$0")/../.envrc"
 FORCE=false
 [[ "${1:-}" == "-f" ]] && FORCE=true
 

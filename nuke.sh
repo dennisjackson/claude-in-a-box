@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-PROJ_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PROJ_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # --- Colours & helpers -------------------------------------------------------
 bold=$'\033[1m'
