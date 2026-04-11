@@ -24,38 +24,66 @@ warn()    { printf '  %s⚠  %s%s\n' "$yellow" "$1" "$reset"; }
 ok()      { printf '  %s✓  %s%s\n' "$green" "$1" "$reset"; }
 err()     { printf '  %s✗  %s%s\n' "$red" "$1" "$reset"; }
 
-ask_yes_no() {
-    local prompt="$1"
-    local answer
-    printf '  %s [y/N] ' "$prompt"
-    read -r answer
-    [[ "$answer" =~ ^[Yy]$ ]]
-}
+# --- Determine scope ---------------------------------------------------------
+# cbx-nuke              → destroy ALL cbx containers + sccache volume
+# cbx-nuke <project-dir> → destroy just that project's container (keep sccache)
+
+if [ $# -ge 1 ]; then
+    TARGET_DIR="$(cd "$1" && pwd)"
+    MODE="single"
+else
+    MODE="all"
+fi
 
 # --- Inventory what will be destroyed ----------------------------------------
 section "The following will be destroyed"
 
-# Container
-CONTAINER_ID=$(docker ps -aq --filter "label=devcontainer.local_folder=$PROJ_DIR" 2>/dev/null || true)
-if [ -n "$CONTAINER_ID" ]; then
-    state=$(docker inspect -f '{{.State.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "unknown")
-    printf '  Container:  %s (%s)\n' "${CONTAINER_ID:0:12}" "$state"
+if [ "$MODE" = "single" ]; then
+    CONTAINER_ID=$(docker ps -aq --filter "label=cbx.project=$TARGET_DIR" 2>/dev/null || true)
+    if [ -n "$CONTAINER_ID" ]; then
+        state=$(docker inspect -f '{{.State.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "unknown")
+        printf '  Container:  %s (%s) — %s\n' "${CONTAINER_ID:0:12}" "$state" "$TARGET_DIR"
+    else
+        printf '  Container:  %snone found for %s%s\n' "$dim" "$TARGET_DIR" "$reset"
+    fi
 else
-    printf '  Container:  %snone found%s\n' "$dim" "$reset"
-fi
+    # Find all cbx containers (current label scheme)
+    CONTAINER_IDS=$(docker ps -aq --filter "label=cbx.project" 2>/dev/null || true)
+    # Also find legacy containers (old label scheme, before multi-container support)
+    LEGACY_IDS=$(docker ps -aq --filter "label=devcontainer.local_folder=$PROJ_DIR" 2>/dev/null || true)
+    # Merge and deduplicate
+    ALL_IDS=$(printf '%s\n%s' "$CONTAINER_IDS" "$LEGACY_IDS" | sort -u | grep -v '^$' || true)
 
-# sccache volume
-vol="claude-dev-sccache"
-info=$(docker volume inspect "$vol" --format '{{.CreatedAt}}' 2>/dev/null || true)
-if [ -n "$info" ]; then
-    printf '  Volume:     %s  %s(created: %s)%s\n' "$vol" "$dim" "$info" "$reset"
-else
-    printf '  Volume:     %s  %snot found%s\n' "$vol" "$dim" "$reset"
+    if [ -n "$ALL_IDS" ]; then
+        while IFS= read -r cid; do
+            state=$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || echo "unknown")
+            project=$(docker inspect -f '{{index .Config.Labels "cbx.project"}}' "$cid" 2>/dev/null || true)
+            if [ -z "$project" ]; then
+                project="(legacy container)"
+            fi
+            printf '  Container:  %s (%s) — %s\n' "${cid:0:12}" "$state" "$project"
+        done <<< "$ALL_IDS"
+    else
+        printf '  Containers: %snone found%s\n' "$dim" "$reset"
+    fi
+
+    # sccache volume
+    vol="claude-dev-sccache"
+    info=$(docker volume inspect "$vol" --format '{{.CreatedAt}}' 2>/dev/null || true)
+    if [ -n "$info" ]; then
+        printf '  Volume:     %s  %s(created: %s)%s\n' "$vol" "$dim" "$info" "$reset"
+    else
+        printf '  Volume:     %s  %snot found%s\n' "$vol" "$dim" "$reset"
+    fi
 fi
 
 # --- Confirm -----------------------------------------------------------------
 echo ""
-printf '%s%sThis will permanently delete the container and sccache volume.%s\n' "$bold" "$red" "$reset"
+if [ "$MODE" = "single" ]; then
+    printf '%s%sThis will permanently delete the container for %s.%s\n' "$bold" "$red" "$TARGET_DIR" "$reset"
+else
+    printf '%s%sThis will permanently delete all containers and the sccache volume.%s\n' "$bold" "$red" "$reset"
+fi
 printf 'Type "nuke" to confirm: '
 read -r confirm
 
@@ -66,23 +94,34 @@ fi
 
 echo ""
 
-# --- Destroy container -------------------------------------------------------
-section "Removing container"
+# --- Destroy container(s) ----------------------------------------------------
+section "Removing container(s)"
 
-if [ -n "$CONTAINER_ID" ]; then
-    docker rm -f "$CONTAINER_ID" >/dev/null 2>&1
-    ok "Container removed"
+if [ "$MODE" = "single" ]; then
+    if [ -n "$CONTAINER_ID" ]; then
+        docker rm -f "$CONTAINER_ID" >/dev/null 2>&1
+        ok "Container removed"
+    else
+        ok "No container to remove"
+    fi
 else
-    ok "No container to remove"
-fi
+    if [ -n "$ALL_IDS" ]; then
+        while IFS= read -r cid; do
+            docker rm -f "$cid" >/dev/null 2>&1
+            ok "Removed ${cid:0:12}"
+        done <<< "$ALL_IDS"
+    else
+        ok "No containers to remove"
+    fi
 
-# --- Destroy sccache volume --------------------------------------------------
-section "Removing sccache volume"
+    # --- Destroy sccache volume ----------------------------------------------
+    section "Removing sccache volume"
 
-if docker volume rm claude-dev-sccache >/dev/null 2>&1; then
-    ok "Removed claude-dev-sccache"
-else
-    ok "claude-dev-sccache already absent"
+    if docker volume rm claude-dev-sccache >/dev/null 2>&1; then
+        ok "Removed claude-dev-sccache"
+    else
+        ok "claude-dev-sccache already absent"
+    fi
 fi
 
 echo ""

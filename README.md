@@ -30,9 +30,16 @@ Claude, and optionally a `.claude/commands/` directory with slash commands.
 cbx-connect /path/to/my-project
 ```
 
-Builds the container on first run, then mounts your project folder and drops
-you into a shell. Claude Code is pre-installed. The sccache volume persists
-across container rebuilds and project switches.
+Builds a container on first run, then mounts your project folder and drops you
+into a shell. Claude Code is pre-installed. The sccache volume is shared across
+all containers and persists across rebuilds.
+
+Multiple containers can run simultaneously — just open another terminal and
+connect to a different project:
+
+```bash
+cbx-connect /path/to/other-project
+```
 
 On first run this prompts for your Anthropic API key and writes it to `.envrc`.
 
@@ -49,10 +56,11 @@ host.
 
 | Script | Purpose |
 |--------|---------|
-| `cbx-connect <project-dir>` | Mount a project folder and connect to the container. |
-| `cbx-nuke` | Destroy container and sccache volume. Requires typing "nuke". |
-| `internal/status.sh` | Report container state and environment config. |
-| `internal/fresh-container.sh` | Tear down and rebuild the container. |
+| `cbx-connect <project-dir>` | Mount a project folder and connect (one container per project). |
+| `cbx-nuke` | Destroy all containers and sccache volume. Requires typing "nuke". |
+| `cbx-nuke <project-dir>` | Destroy just that project's container. |
+| `internal/status.sh` | Report all container states and environment config. |
+| `internal/fresh-container.sh <project-dir>` | Tear down and rebuild a project's container. |
 | `internal/setup-envrc.sh` | Set up `.envrc` with API key. |
 
 ## Container Contents

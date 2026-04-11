@@ -22,6 +22,10 @@ volume but no project-specific content. You point `cbx-connect` at a **project
 folder** on the host and that folder gets bind-mounted read-write into the
 container at `/workspaces/project/`.
 
+Multiple containers can run simultaneously for different project folders. Each
+project gets its own container, identified by a `cbx.project=<path>` Docker
+label. The sccache volume is shared across all containers.
+
 The project folder should contain whatever the task needs: source code,
 CLAUDE.md, `.claude/` commands directory, data files, etc. Claude Code inside
 the container will pick up the project's CLAUDE.md and commands automatically.
@@ -29,14 +33,18 @@ the container will pick up the project's CLAUDE.md and commands automatically.
 ## Host Tools
 
 - `cbx-connect <project-dir>` — mount the given project directory into the dev
-  container and connect. Creates the container on first use, recreates it when
-  switching projects. Auto-runs envrc setup if `.envrc` is missing.
-- `cbx-nuke` — destroy the container and sccache volume (requires typing "nuke").
-- `internal/fresh-container.sh` — tear down and rebuild the dev container.
+  container and connect. Creates a container on first use for each project
+  directory. Auto-runs envrc setup if `.envrc` is missing.
+- `cbx-nuke` — destroy all cbx containers and the sccache volume (requires
+  typing "nuke").
+- `cbx-nuke <project-dir>` — destroy only the container for that project
+  (keeps sccache and other containers).
+- `internal/fresh-container.sh <project-dir>` — tear down and rebuild the
+  container for a specific project.
 - `internal/setup-envrc.sh` — interactively populate `.envrc` with
   `ANTHROPIC_API_KEY`. Triggered automatically by `cbx-connect` when `.envrc` is
   missing.
-- `internal/status.sh` — report container state, sccache volume, and
+- `internal/status.sh` — report all container states, sccache volume, and
   environment config.
 
 ## Workflow
@@ -47,6 +55,8 @@ the container will pick up the project's CLAUDE.md and commands automatically.
 3. Claude Code is pre-installed and pre-configured inside. It sees the project
    folder contents at `/workspaces/project/`.
 4. All changes Claude makes are written directly to the host project folder.
+5. To work on another project simultaneously, open a new terminal and run
+   `cbx-connect /path/to/other-project`. Each project gets its own container.
 
 ## Security Model
 

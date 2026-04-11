@@ -3,8 +3,8 @@ set -euo pipefail
 
 PROJ_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-# Helper: run a command in the container as the vscode user
-cexec() { docker exec -u vscode "$CONTAINER_ID" "$@"; }
+# Helper: run a command in a container as the vscode user
+cexec() { docker exec -u vscode "$1" "$@"; }
 
 # --- Colours & helpers -------------------------------------------------------
 bold=$'\033[1m'
@@ -22,34 +22,37 @@ ok()      { printf '  %s✓  %s%s\n' "$green" "$1" "$reset"; }
 err()     { printf '  %s✗  %s%s\n' "$red" "$1" "$reset"; }
 
 # --- Container status --------------------------------------------------------
-section "Container"
+section "Containers"
 
-CONTAINER_ID=$(docker ps -q --filter "label=devcontainer.local_folder=$PROJ_DIR" 2>/dev/null || true)
+# Find all cbx containers
+CONTAINER_IDS=$(docker ps -aq --filter "label=cbx.project" 2>/dev/null || true)
 
-if [ -z "$CONTAINER_ID" ]; then
-    STOPPED_ID=$(docker ps -aq --filter "label=devcontainer.local_folder=$PROJ_DIR" 2>/dev/null || true)
-    if [ -n "$STOPPED_ID" ]; then
-        err "Container exists but is stopped (${STOPPED_ID:0:12})"
-        CREATED=$(docker inspect -f '{{.Created}}' "$STOPPED_ID" 2>/dev/null || echo "unknown")
-        kv "Created:" "$CREATED"
-    else
-        err "No container found"
-    fi
-    CONTAINER_ID=""
+if [ -z "$CONTAINER_IDS" ]; then
+    err "No containers found"
 else
-    ok "Running (${CONTAINER_ID:0:12})"
-    CREATED=$(docker inspect -f '{{.Created}}' "$CONTAINER_ID" 2>/dev/null || echo "unknown")
-    UPTIME=$(docker inspect -f '{{.State.StartedAt}}' "$CONTAINER_ID" 2>/dev/null || echo "unknown")
-    IMAGE=$(docker inspect -f '{{.Config.Image}}' "$CONTAINER_ID" 2>/dev/null || echo "unknown")
-    kv "Created:" "$CREATED"
-    kv "Started:" "$UPTIME"
-    kv "Image:" "$IMAGE"
+    while IFS= read -r CONTAINER_ID; do
+        state=$(docker inspect -f '{{.State.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "unknown")
+        project=$(docker inspect -f '{{index .Config.Labels "cbx.project"}}' "$CONTAINER_ID" 2>/dev/null || echo "unknown")
+        project_name=$(basename "$project")
 
-    # Show what project is mounted
-    PROJECT_MOUNT=$(docker inspect -f '{{ range .Mounts }}{{ if eq .Destination "/workspaces/project" }}{{ .Source }}{{ end }}{{ end }}' "$CONTAINER_ID" 2>/dev/null || true)
-    if [ -n "$PROJECT_MOUNT" ]; then
-        kv "Project:" "$PROJECT_MOUNT"
-    fi
+        if [ "$state" = "running" ]; then
+            ok "${green}${project_name}${reset}  (${CONTAINER_ID:0:12}, running)"
+        else
+            err "${project_name}  (${CONTAINER_ID:0:12}, $state)"
+        fi
+
+        CREATED=$(docker inspect -f '{{.Created}}' "$CONTAINER_ID" 2>/dev/null || echo "unknown")
+        kv "  Project:" "$project"
+        kv "  Created:" "$CREATED"
+
+        if [ "$state" = "running" ]; then
+            UPTIME=$(docker inspect -f '{{.State.StartedAt}}' "$CONTAINER_ID" 2>/dev/null || echo "unknown")
+            IMAGE=$(docker inspect -f '{{.Config.Image}}' "$CONTAINER_ID" 2>/dev/null || echo "unknown")
+            kv "  Started:" "$UPTIME"
+            kv "  Image:" "$IMAGE"
+        fi
+        echo ""
+    done <<< "$CONTAINER_IDS"
 fi
 
 # --- Persistent volumes ------------------------------------------------------
@@ -63,9 +66,10 @@ else
     warn "$vol  — not found (will be created on first container start)"
 fi
 
-# If container is running, show sccache stats
-if [ -n "$CONTAINER_ID" ]; then
-    sccache_stats=$(cexec sccache --show-stats 2>/dev/null || echo "unavailable")
+# Show sccache stats from a running container (pick the first one)
+RUNNING_ID=$(docker ps -q --filter "label=cbx.project" 2>/dev/null | head -1 || true)
+if [ -n "$RUNNING_ID" ]; then
+    sccache_stats=$(docker exec -u vscode "$RUNNING_ID" sccache --show-stats 2>/dev/null || echo "unavailable")
     if [ "$sccache_stats" != "unavailable" ]; then
         cache_size=$(echo "$sccache_stats" | grep -i "cache size" | head -1 | sed 's/.*: *//' || echo "?")
         hit_rate=$(echo "$sccache_stats" | grep -i "hit rate" | head -1 | sed 's/.*: *//' || true)
