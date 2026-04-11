@@ -11,7 +11,8 @@ Follow those instructions.
 
 ### Compilers & Build
 - **Clang 18** (default) -- `CC=clang`, `CXX=clang++`
-- **build-essential** (gcc/g++), **CMake**, **Ninja**, **gyp**, **pkg-config**
+- **GCC 14** (gcc/g++/gfortran via `update-alternatives`)
+- **build-essential**, **CMake**, **Ninja**, **gyp**, **pkg-config**
 - **bear** -- generate `compile_commands.json`
 - **sccache** -- compiler cache backed by a persistent volume at `/.sccache`
 

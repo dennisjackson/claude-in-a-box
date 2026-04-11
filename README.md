@@ -57,7 +57,7 @@ host.
 
 ## Container Contents
 
-The container includes Clang 18, sccache, gdb, valgrind, clang-tidy,
+The container includes Clang 18, GCC 14, sccache, gdb, valgrind, clang-tidy,
 clang-format, cppcheck, weggli, semgrep, lcov, diff-cover, AFL++, angr, Z3,
 searchfox-cli, git-cinnabar, Rust, uv, tlslite-ng, vim, micro, tmux, and
 Claude Code.

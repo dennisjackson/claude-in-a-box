@@ -15,12 +15,26 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
         lld-18 lldb-18 libclang-18-dev libclang-rt-18-dev libfuzzer-18-dev \
         llvm-18 llvm-18-dev \
     && for tool in clang clang++ clang-format clang-tidy clang-cpp lld lldb \
-                   asan_symbolize llvm-symbolizer llvm-ar llvm-nm llvm-objdump \
+                   clangd asan_symbolize llvm-symbolizer llvm-ar llvm-nm llvm-objdump \
                    llvm-ranlib llvm-strip llvm-profdata llvm-cov; do \
         ln -sf "/usr/bin/${tool}-18" "/usr/local/bin/${tool}"; \
     done \
     && apt-get autoremove -y && apt-get clean -y \
     && rm -rf /var/lib/apt/lists/*
+
+# GCC 14 — Ubuntu 22.04 ships GCC 11; add the Toolchain PPA for a modern version.
+RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
+    && apt-get -y install --no-install-recommends software-properties-common \
+    && add-apt-repository -y ppa:ubuntu-toolchain-r/test \
+    && apt-get update \
+    && apt-get -y install --no-install-recommends \
+        gcc-14 g++-14 gfortran-14 \
+    && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 140 \
+        --slave /usr/bin/g++ g++ /usr/bin/g++-14 \
+        --slave /usr/bin/gfortran gfortran /usr/bin/gfortran-14 \
+    && apt-get autoremove -y && apt-get clean -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && gcc --version
 
 # Core build tools and common dependencies
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
