@@ -32,7 +32,7 @@ Follow those instructions.
 
 ### Languages
 - **Rust** (rustc, cargo)
-- **Python 3**, **uv** (fast Python package manager), **Node.js 22**
+- **Python 3**, **uv** (fast Python package manager)
 
 ### Networking
 - **tlslite-ng** -- pure-Python TLS implementation

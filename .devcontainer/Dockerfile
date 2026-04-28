@@ -76,13 +76,6 @@ RUN curl -fsSL https://getmic.ro | bash \
 # diff-cover — show coverage diff between branches
 RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install diff-cover
 
-
-# Install Node.js 22 LTS (Ubuntu 22.04's packaged version is too old for Claude Code)
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/* \
-    && node --version
-
 # Install git-cinnabar (use Git to work with Mercurial repos)
 RUN ARCH="$(uname -m)" \
     && case "$ARCH" in \
@@ -161,9 +154,14 @@ ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh \
     && uv --version
 
-# Install Claude Code
-RUN npm install -g @anthropic-ai/claude-code \
-    && claude --version
+# Install Claude Code (official native installer — no Node.js required).
+# The installer writes to ~/.local/bin/, so it must run as the target user.
+USER vscode
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && /home/vscode/.local/bin/claude --version
+USER root
+
+ENV PATH="/home/vscode/.local/bin:$PATH"
 
 # Create workspace and sccache directories.
 # Volume mount points must be owned by vscode before volumes are attached,
