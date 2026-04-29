@@ -51,7 +51,9 @@ else
     echo "    no .envrc found, skipping"
 fi
 
-echo "==> Configuring git identity from host..."
+echo "==> Configuring git..."
+git config --global worktree.useRelativePaths true
+
 IDENTITY_FILE="${WORKSPACE}/.host-git-identity"
 if [ -f "${IDENTITY_FILE}" ]; then
     GIT_NAME="$(sed -n '1p' "${IDENTITY_FILE}")"

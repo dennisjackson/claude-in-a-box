@@ -76,6 +76,15 @@ RUN curl -fsSL https://getmic.ro | bash \
 # diff-cover — show coverage diff between branches
 RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install diff-cover
 
+# Modern git — Ubuntu 22.04 ships 2.34; the git-core PPA tracks the latest stable.
+RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
+    && add-apt-repository -y ppa:git-core/ppa \
+    && apt-get update \
+    && apt-get -y install --no-install-recommends git \
+    && apt-get autoremove -y && apt-get clean -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && git --version
+
 # Install git-cinnabar (use Git to work with Mercurial repos)
 RUN ARCH="$(uname -m)" \
     && case "$ARCH" in \
