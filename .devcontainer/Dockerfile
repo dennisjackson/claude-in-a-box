@@ -163,13 +163,12 @@ ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh \
     && uv --version
 
-# Install Claude Code (official native installer — no Node.js required).
-# The installer writes to ~/.local/bin/, so it must run as the target user.
-USER vscode
-RUN curl -fsSL https://claude.ai/install.sh | bash \
-    && /home/vscode/.local/bin/claude --version
-USER root
-
+# Claude Code is intentionally NOT installed here. Baking it into the image
+# would pin its version to whatever was latest at build time, and Docker's
+# layer cache would keep reusing that layer on later builds since the
+# installer command never changes. Instead it's installed in post-create.sh,
+# which runs on every container (re)creation and always picks up the latest
+# version. This just pre-declares where the installer will put the binary.
 ENV PATH="/home/vscode/.local/bin:$PATH"
 
 # Create workspace and sccache directories.

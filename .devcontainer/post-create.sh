@@ -3,6 +3,10 @@ set -euo pipefail
 
 WORKSPACE="/workspaces/project"
 
+echo "==> Installing Claude Code..."
+curl -fsSL https://claude.ai/install.sh | bash
+claude --version
+
 echo "==> Configuring Claude Code..."
 mkdir -p ~/.claude
 
