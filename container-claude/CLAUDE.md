@@ -33,30 +33,55 @@ Follow those instructions.
 
 ### Binary & Constraint Analysis
 - **angr** -- binary analysis / symbolic execution (run scripts with
-  `angr-python`, not `python3` -- see the interpreter table below)
-- **Z3** -- SMT solver (`z3` CLI; Python bindings via `angr-python`)
+  `analysis-python`, not `python3` -- see the interpreter table below)
+- **Z3** -- SMT solver (`z3` CLI; Python bindings via `analysis-python`)
 
 ### Languages
 - **Rust** (rustc, cargo)
-- **Python 3**, **uv** (fast Python package manager)
+- **Python 3**, **uv** (fast Python package manager; also manages standalone
+  CPython builds, so a script can ask for a newer Python than the system one)
 - **Node.js 24** (node, npm, npx)
 
 ### Which Python has what
 
-The Python libraries are **not** all importable from one interpreter. Each
-pipx-installed tool lives in its own venv, so pick the interpreter that has
-the library you need:
+The Python libraries are **not** all importable from one interpreter. Pick the
+one that has the library you need:
 
 | Interpreter | Has | Use it for |
 |---|---|---|
 | `python3` (`/usr/bin/python3`) | PyYAML | `#!/usr/bin/env python3` scripts, NSS's `./mach` |
-| `angr-python` | angr, z3, claripy | binary analysis, SMT/constraint scripting |
-| `tlslite-python` | tlslite-ng | TLS interop scripting |
-| `uv run --with <pkg>` | anything | one-off scripts needing a package none of the above has |
+| `analysis-python` | angr, z3, claripy, tlslite | binary analysis, SMT/constraint scripting, TLS interop |
+| `uv run --no-project --with <pkg>` | anything | one-off scripts needing a package neither of the above has |
 
-`angr-python` and `tlslite-python` are symlinks to the pipx venv
-interpreters. The apt `z3` package is the CLI only -- Python `import z3` comes
-from angr's venv.
+`analysis-python` is a shared venv at `/opt/venvs/analysis` running a
+uv-managed **Python 3.12** -- angr requires >= 3.12 and the system `python3`
+is 3.10, so it cannot host angr at all. `angr-python` and `tlslite-python`
+are aliases for the same interpreter. All three are wrapper scripts, not
+symlinks: symlinking a venv interpreter elsewhere makes CPython miss
+`pyvenv.cfg` and silently fall back to the base site-packages.
+
+The apt `z3` package is the CLI only -- Python `import z3` comes from the
+analysis venv.
+
+To add a library permanently:
+
+```sh
+uv pip install --python /opt/venvs/analysis/bin/python <pkg>
+```
+
+For a throwaway script, declare the dependency inline (PEP 723) and let uv
+build the environment -- uv's cache is pre-warmed with angr's wheels, and it
+will fetch and manage any other interpreter version a script asks for:
+
+```python
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["angr"]
+# ///
+```
+
+then `uv run --no-project script.py`. Pass `--no-project` so uv does not try
+to sync a `pyproject.toml` it finds in the project tree.
 
 ### Documentation
 - **Sphinx** (`sphinx-build`) -- documentation builder / linter, with the
@@ -89,7 +114,7 @@ from angr's venv.
   It sits at the **back** of `PATH` so its dependency tree (its own python3,
   binutils, gfortran, openssl) cannot shadow the system toolchain. Anything
   installed with `brew install` only wins if nothing else provides that name;
-  prefer apt or pipx when both have the tool.
+  prefer apt, uv or pipx when both have the tool.
 
 ## Workspace Layout
 

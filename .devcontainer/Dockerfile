@@ -131,21 +131,62 @@ ENV SCCACHE_DIR=/.sccache \
     CC="sccache clang" \
     CXX="sccache clang++"
 
-# angr — binary analysis framework
-RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install angr
+# uv — fast Python package manager. It also manages standalone CPython builds,
+# which is what makes the analysis venv below possible: angr requires Python
+# >= 3.12 and this image's system python3 is Ubuntu 22.04's 3.10. The install
+# dir and cache live under /opt/uv so both root (build time) and vscode
+# (runtime) share one warm wheel cache.
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python \
+    UV_CACHE_DIR=/opt/uv/cache
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh \
+    && uv --version
 
-# tlslite-ng — pure-Python TLS implementation (for interop testing)
-RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install tlslite-ng
-
-# pipx isolates every tool in its own venv, so `import angr`, `import z3` and
-# `import tlslite` all fail from the system python3 even though the container
-# advertises those libraries. Expose the venv interpreters under explicit
-# names so scripts can reach them. z3's Python bindings come from angr's venv
-# (angr depends on z3-solver); the apt z3 package is CLI-only.
-RUN ln -sf /opt/pipx/venvs/angr/bin/python /usr/local/bin/angr-python \
-    && ln -sf /opt/pipx/venvs/tlslite-ng/bin/python /usr/local/bin/tlslite-python \
-    && angr-python -c "import angr, z3; print('angr + z3 ok')" \
-    && tlslite-python -c "import tlslite; print('tlslite ok')"
+# Python analysis libraries (angr, z3, tlslite-ng) live in ONE shared venv
+# built by uv, not in a pipx venv each. pipx installs *applications* and
+# deliberately hides their site-packages; these are wanted as *libraries* to
+# import from ad-hoc scripts. pipx also had to build against the system
+# python3 (3.10), which silently resolves to a years-old angr.
+#
+# The venv interpreter is exposed through wrapper scripts, NOT symlinks.
+# CPython finds pyvenv.cfg by walking up from the directory of the path it was
+# invoked as, so a symlink at /usr/local/bin/angr-python makes it search
+# /usr/local/bin and /usr/local, find nothing, and silently fall back to the
+# base interpreter's site-packages.
+#
+# Installing here also warms UV_CACHE_DIR with angr's whole wheel set, so
+# ad-hoc `uv run --no-project --with angr script.py` resolves from cache.
+#
+# The venv and the uv dirs are built as vscode rather than chowned afterwards:
+# a recursive chown over the managed interpreter and the wheel cache would
+# copy several hundred MB into an extra layer.
+ARG ANALYSIS_PYTHON=3.12
+RUN mkdir -p /opt/uv /opt/venvs && chown vscode:vscode /opt/uv /opt/venvs
+USER vscode
+#
+# CC/CXX/RUSTC_WRAPPER are unwrapped for this layer: everything here should
+# install from a wheel, but if a package does fall back to a source build,
+# sccache would try to create SCCACHE_DIR (/.sccache, not made until much
+# later) as vscode and fail at the filesystem root for no useful reason.
+RUN uv python install "$ANALYSIS_PYTHON" \
+    && uv venv --python "$ANALYSIS_PYTHON" /opt/venvs/analysis \
+    && env CC=clang CXX=clang++ RUSTC_WRAPPER= \
+        uv pip install --python /opt/venvs/analysis/bin/python \
+            angr z3-solver tlslite-ng
+USER root
+# Note: no continuation line inside a RUN may start with `from` (or any other
+# Docker keyword — instructions are case-insensitive). The devcontainer CLI
+# parses this file line by line to find the base image and does not honour
+# backslash continuations, so a Python `from x import y` at the start of a
+# line makes it try to `docker pull x`. Hence `import importlib.metadata as m`.
+RUN for name in analysis-python angr-python tlslite-python; do \
+        printf '#!/bin/sh\nexec /opt/venvs/analysis/bin/python "$@"\n' \
+            > "/usr/local/bin/$name"; \
+        chmod 0755 "/usr/local/bin/$name"; \
+    done \
+    && analysis-python -c "import angr, z3, claripy, tlslite" \
+    && analysis-python -c "import importlib.metadata as m; \
+        pkgs = ['angr', 'z3-solver', 'tlslite-ng']; \
+        print(' '.join(p + ' ' + m.version(p) for p in pkgs))"
 
 # Z3 — SMT solver (constraint reasoning over bit-vectors, modular arithmetic)
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
@@ -190,10 +231,6 @@ USER root
 # Nothing brew installs here needs to win a name collision, and watchman has a
 # full RPATH into the Cellar so it runs fine from the back of PATH.
 ENV PATH="$PATH:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin"
-
-# uv — fast Python package manager and runner
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh \
-    && uv --version
 
 # Node.js 24 (LTS) — Ubuntu 22.04 has no node at all, and @firefox-devtools/
 # profiler-cli below requires >= 24. Installed from the official tarball
@@ -277,8 +314,13 @@ RUN set -eu; \
     env SCCACHE_DIR="$d/sccache" sccache --stop-server > /dev/null 2>&1 || true; \
     rm -rf "$d"; \
     echo "== python islands =="; \
-    angr-python -c "import angr, z3" || fail "angr-python cannot import angr/z3"; \
-    tlslite-python -c "import tlslite" || fail "tlslite-python cannot import tlslite"; \
+    for py in analysis-python angr-python tlslite-python; do \
+        "$py" -c "import angr, z3, claripy, tlslite" \
+            || fail "$py cannot import the analysis venv (angr/z3/claripy/tlslite)"; \
+        "$py" -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" \
+            || fail "$py is older than Python 3.12 (angr requires >= 3.12)"; \
+        printf '  %-16s %s\n' "$py" "$("$py" -c 'import sys; print(sys.version.split()[0], sys.prefix)')"; \
+    done; \
     /opt/pipx/venvs/sphinx/bin/python -c "import myst_parser" || fail "sphinx venv is missing myst-parser"; \
     echo "== cli tools =="; \
     for tool in sphinx-build semgrep diff-cover weggli searchfox-cli micro uv \

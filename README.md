@@ -70,9 +70,10 @@ clang-format, cppcheck, weggli, semgrep, lcov, diff-cover, AFL++, angr, Z3,
 searchfox-cli, git-cinnabar, Rust, Node.js 24, uv, PyYAML, Sphinx (+
 myst-parser), tlslite-ng, profiler-cli, vim, micro, tmux, and Claude Code.
 
-`CC`/`CXX` are wrapped in sccache by default. Python libraries installed with
-pipx live in their own venvs and are reached through dedicated interpreters
-(`angr-python`, `tlslite-python`) rather than the system `python3` — see
+`CC`/`CXX` are wrapped in sccache by default. The Python analysis libraries
+(angr, z3, tlslite-ng) live in a shared uv venv on Python 3.12 — the system
+`python3` is Ubuntu 22.04's 3.10, which current angr does not support — and
+are reached through `analysis-python` rather than `python3`; see
 `container-claude/CLAUDE.md` for the full table. The Dockerfile's final layer
 asserts all of this holds in the built image, so a broken environment fails the
 build rather than showing up mid-task.

@@ -143,6 +143,22 @@ it persists across container rebuilds and project switches.
 `NODE_VERSION` in the Dockerfile), which provides `node`/`npm`/`npx` and backs
 the `profiler-cli` install.
 
+**Python splits into two islands.** The system `python3` is Ubuntu 22.04's
+3.10 and stays that way — `./mach` and every `#!/usr/bin/env python3` script
+depend on it and on the apt PyYAML. The analysis libraries (angr, z3-solver,
+tlslite-ng) need a newer interpreter than the distro has (angr requires
+>= 3.12), so they live in a single uv venv at `/opt/venvs/analysis` running a
+uv-managed CPython 3.12, exposed as `analysis-python` (plus `angr-python` and
+`tlslite-python` aliases). pipx is still used for Python *applications*
+(diff-cover, semgrep, sphinx), which is what it is for; libraries meant to be
+imported do not belong in a pipx venv, whose site-packages is deliberately
+hidden. These are **wrapper scripts, not symlinks** — CPython locates
+`pyvenv.cfg` by walking up from the directory of the path it was invoked as,
+so a symlink into `/usr/local/bin` bypasses the venv and silently resolves
+imports against the base interpreter. Installing the venv at build time also
+warms `UV_CACHE_DIR` (`/opt/uv/cache`), so ad-hoc
+`uv run --no-project --with angr` inside the container resolves from cache.
+
 **Homebrew sits at the back of `PATH`.** Its watchman dependency tree ships its
 own python3, binutils, gfortran and openssl, which shadowed ~70 system binaries
 when brew was at the front — `/usr/bin/env python3` lost PyYAML (breaking
@@ -152,8 +168,10 @@ binutils. Keep new brew installs to things nothing else provides.
 The last layer in the Dockerfile is an **environment-assertion `RUN`** that
 re-checks the finished image: no critical binary resolving into the Homebrew
 prefix, `import yaml` from the system python3, a real compile/link/ASan-link
-through `$CC`/`$CXX` with a non-zero sccache request count, the pipx venv
-interpreters, and the expected CLI tools. Per-layer smoke tests can only prove
+through `$CC`/`$CXX` with a non-zero sccache request count, each Python island
+(every `*-python` wrapper importing the analysis libraries on a >= 3.12
+interpreter, and the sphinx pipx venv), and the expected CLI tools. Per-layer
+smoke tests can only prove
 a tool worked when it was installed; this one catches later shadowing. Extend
 it when adding tools.
 
