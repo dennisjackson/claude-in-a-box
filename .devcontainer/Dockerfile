@@ -117,22 +117,35 @@ RUN cargo install searchfox-cli \
 
 # sccache — shared compiler cache, dramatically speeds up rebuilds.
 # The cache directory is backed by a named volume so it survives container
-# rebuilds. sccache is available but not wired into CC/CXX by default,
-# because projects like Mozilla manage their own sccache wrapping.
+# rebuilds. CC/CXX are wrapped in sccache: left unwrapped, the cache sat
+# completely idle (0 compile requests across full NSS builds) while still
+# being advertised as a compiler cache. Projects that do their own sccache
+# wrapping (Mozilla's mozconfig, for instance) override CC/CXX anyway, so
+# wrapping here only affects builds that would otherwise get no caching.
 RUN cargo install sccache \
     && sccache --version
 
 ENV SCCACHE_DIR=/.sccache \
     SCCACHE_CACHE_SIZE=5G \
     RUSTC_WRAPPER=sccache \
-    CC=clang \
-    CXX=clang++
+    CC="sccache clang" \
+    CXX="sccache clang++"
 
 # angr — binary analysis framework
 RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install angr
 
 # tlslite-ng — pure-Python TLS implementation (for interop testing)
 RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install tlslite-ng
+
+# pipx isolates every tool in its own venv, so `import angr`, `import z3` and
+# `import tlslite` all fail from the system python3 even though the container
+# advertises those libraries. Expose the venv interpreters under explicit
+# names so scripts can reach them. z3's Python bindings come from angr's venv
+# (angr depends on z3-solver); the apt z3 package is CLI-only.
+RUN ln -sf /opt/pipx/venvs/angr/bin/python /usr/local/bin/angr-python \
+    && ln -sf /opt/pipx/venvs/tlslite-ng/bin/python /usr/local/bin/tlslite-python \
+    && angr-python -c "import angr, z3; print('angr + z3 ok')" \
+    && tlslite-python -c "import tlslite; print('tlslite ok')"
 
 # Z3 — SMT solver (constraint reasoning over bit-vectors, modular arithmetic)
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
@@ -151,11 +164,15 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 # semgrep — pattern-based static analysis
 RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install semgrep
 
-# Sphinx — RST documentation builder. Required by NSS's `./mach doc-lint`,
-# which shells out to `sphinx-build`. NSS's doc/rst/conf.py declares no
-# extensions and no custom theme, so the base package is sufficient.
+# Sphinx — documentation builder. Required by NSS's `./mach doc-lint`, which
+# shells out to `sphinx-build`. The docs moved from doc/rst to doc/src and are
+# written in MyST Markdown now, so doc/src/conf.py loads the myst_parser
+# extension; without it every doc-lint run fails at config time. myst_parser
+# is the only extension conf.py requires.
 RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install sphinx \
-    && sphinx-build --version
+    && PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx inject sphinx myst-parser \
+    && sphinx-build --version \
+    && /opt/pipx/venvs/sphinx/bin/python -c "import myst_parser; print('myst-parser', myst_parser.__version__)"
 
 # Homebrew (Linuxbrew) — used for packages not in Ubuntu repos
 # The installer refuses to run as root, so switch to vscode for this step.
@@ -165,11 +182,45 @@ RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.co
     && /home/linuxbrew/.linuxbrew/bin/watchman version
 USER root
 
-ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"
+# Homebrew goes at the BACK of PATH, not the front. watchman's dependency tree
+# drags in brew's own python3, binutils, gfortran and openssl, which between
+# them shadow ~70 system binaries: `/usr/bin/env python3` stops seeing the
+# system PyYAML (breaking `./mach`), and clang links every binary — sanitizer
+# builds included — against brew's rolling ld instead of Ubuntu's binutils.
+# Nothing brew installs here needs to win a name collision, and watchman has a
+# full RPATH into the Cellar so it runs fine from the back of PATH.
+ENV PATH="$PATH:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin"
 
 # uv — fast Python package manager and runner
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh \
     && uv --version
+
+# Node.js 24 (LTS) — Ubuntu 22.04 has no node at all, and @firefox-devtools/
+# profiler-cli below requires >= 24. Installed from the official tarball
+# rather than an apt repo so the version is pinned and arch-explicit.
+ARG NODE_VERSION=24.19.0
+RUN ARCH="$(uname -m)" \
+    && case "$ARCH" in \
+        x86_64)  NODE_ARCH=x64 ;; \
+        aarch64) NODE_ARCH=arm64 ;; \
+        *)       echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; \
+    esac \
+    && mkdir -p /usr/local/lib/nodejs \
+    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
+    | tar -xJ --strip-components=1 -C /usr/local/lib/nodejs \
+    && for tool in node npm npx; do \
+        ln -sf "/usr/local/lib/nodejs/bin/${tool}" "/usr/local/bin/${tool}"; \
+    done \
+    && node --version \
+    && npm --version
+
+# profiler-cli — query Firefox Profiler profiles from the command line
+# (also available as `pq`). Installed with --prefix /usr/local so its
+# binaries land in /usr/local/bin alongside everything else.
+RUN npm install -g --prefix /usr/local @firefox-devtools/profiler-cli \
+    && npm cache clean --force \
+    && profiler-cli --version \
+    && pq --version
 
 # Claude Code is intentionally NOT installed here. Baking it into the image
 # would pin its version to whatever was latest at build time, and Docker's
@@ -184,3 +235,54 @@ ENV PATH="/home/vscode/.local/bin:$PATH"
 # so that Docker preserves ownership when creating empty named volumes.
 RUN mkdir -p /workspaces/project /.sccache \
     && chown -R vscode:vscode /workspaces /.sccache
+
+# Final environment assertion — the smoke tests attached to the layers above
+# only prove a tool worked *at the moment it was installed*. They cannot catch
+# a later layer shadowing it: the `import yaml` check on the apt layer passes
+# and then Homebrew, added much later, puts a different python3 in front of it.
+# This layer runs last, against the image's final PATH and env, and fails the
+# build if what a user actually gets is broken. Add a check here whenever a new
+# tool starts mattering.
+#
+# Runs as root, so keep it out of /.sccache — root-owned files in a volume
+# mount point break the vscode user later.
+RUN set -eu; \
+    fail() { echo "ENVIRONMENT ASSERTION FAILED: $*" >&2; exit 1; }; \
+    echo "== resolved binaries =="; \
+    for tool in python3 clang clang++ gcc g++ gfortran ld as ar nm ranlib strip \
+                objdump objcopy openssl make perl git node npm sccache; do \
+        p="$(command -v "$tool")" || fail "$tool is not on PATH"; \
+        case "$p" in /home/linuxbrew/*) fail "$tool is shadowed by Homebrew ($p)";; esac; \
+        printf '  %-12s %s\n' "$tool" "$p"; \
+    done; \
+    [ "$(command -v python3)" = /usr/bin/python3 ] || fail "python3 is not /usr/bin/python3"; \
+    python3 -c "import yaml" || fail "system python3 cannot import yaml (needed by ./mach)"; \
+    clang --version | head -1 | grep -q ' 18\.' || fail "clang is not version 18"; \
+    [ -x /usr/local/bin/clang ] || fail "/usr/local/bin/clang is missing (devcontainer.json C_Cpp.default.compilerPath points at it)"; \
+    ld --version | head -1 | grep -q 'GNU ld' || fail "ld is not GNU binutils"; \
+    watchman --version > /dev/null || fail "watchman is not reachable from the back of PATH"; \
+    echo "== toolchain =="; \
+    d=/tmp/env-assert; rm -rf "$d"; mkdir -p "$d"; \
+    printf '#include <stdio.h>\nint main(void){puts("ok");return 0;}\n' > "$d/t.c"; \
+    printf '#include <string>\nint main(){return std::string("ok").size()?0:1;}\n' > "$d/t.cc"; \
+    env SCCACHE_DIR="$d/sccache" $CC -O1 -c -o "$d/t.o" "$d/t.c" || fail "\$CC cannot compile C"; \
+    env SCCACHE_DIR="$d/sccache" $CC -O1 -o "$d/t" "$d/t.o" || fail "\$CC cannot link"; \
+    "$d/t" > /dev/null || fail "binary built by \$CC does not run"; \
+    env SCCACHE_DIR="$d/sccache" $CXX -O1 -c -o "$d/tcc.o" "$d/t.cc" || fail "\$CXX cannot compile C++"; \
+    clang -fsanitize=address -o "$d/tasan" "$d/t.c" || fail "clang cannot link an ASan build"; \
+    reqs="$(env SCCACHE_DIR="$d/sccache" sccache --show-stats \
+            | awk '$0 ~ /^Compile requests[[:space:]]/ {print $NF; exit}')"; \
+    [ "${reqs:-0}" -ge 1 ] || fail "sccache saw no compile requests through \$CC/\$CXX (or --show-stats output no longer parses)"; \
+    echo "  sccache compile requests: $reqs"; \
+    env SCCACHE_DIR="$d/sccache" sccache --stop-server > /dev/null 2>&1 || true; \
+    rm -rf "$d"; \
+    echo "== python islands =="; \
+    angr-python -c "import angr, z3" || fail "angr-python cannot import angr/z3"; \
+    tlslite-python -c "import tlslite" || fail "tlslite-python cannot import tlslite"; \
+    /opt/pipx/venvs/sphinx/bin/python -c "import myst_parser" || fail "sphinx venv is missing myst-parser"; \
+    echo "== cli tools =="; \
+    for tool in sphinx-build semgrep diff-cover weggli searchfox-cli micro uv \
+                cargo rustc z3 afl-fuzz git-cinnabar profiler-cli pq bear; do \
+        command -v "$tool" > /dev/null || fail "$tool is not on PATH"; \
+    done; \
+    echo "all environment assertions passed"

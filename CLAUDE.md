@@ -131,11 +131,31 @@ any sections that are affected. In particular:
 ## Toolchain
 
 The container ships **Clang 18** (from the official LLVM apt repository) and
-defaults to `CC=clang CXX=clang++`. sccache is available but not
-wired into CC/CXX by default, since projects like Mozilla manage their own
-sccache wrapping. RUSTC_WRAPPER is still set to sccache. The sccache directory
-is backed by a named Docker volume (`claude-dev-sccache`) so it persists across
-container rebuilds and project switches.
+defaults to `CC="sccache clang" CXX="sccache clang++"`, with `RUSTC_WRAPPER`
+also set to sccache. CC/CXX were previously left unwrapped on the theory that
+projects like Mozilla manage their own sccache wrapping — in practice the cache
+logged zero compile requests across full NSS builds, so it is wired in by
+default now. Builds that do their own wrapping override CC/CXX anyway. The
+sccache directory is backed by a named Docker volume (`claude-dev-sccache`) so
+it persists across container rebuilds and project switches.
+
+**Node.js 24** is installed from the official tarball (pinned via
+`NODE_VERSION` in the Dockerfile), which provides `node`/`npm`/`npx` and backs
+the `profiler-cli` install.
+
+**Homebrew sits at the back of `PATH`.** Its watchman dependency tree ships its
+own python3, binutils, gfortran and openssl, which shadowed ~70 system binaries
+when brew was at the front — `/usr/bin/env python3` lost PyYAML (breaking
+`./mach`) and clang linked against brew's rolling `ld` instead of Ubuntu's
+binutils. Keep new brew installs to things nothing else provides.
+
+The last layer in the Dockerfile is an **environment-assertion `RUN`** that
+re-checks the finished image: no critical binary resolving into the Homebrew
+prefix, `import yaml` from the system python3, a real compile/link/ASan-link
+through `$CC`/`$CXX` with a non-zero sccache request count, the pipx venv
+interpreters, and the expected CLI tools. Per-layer smoke tests can only prove
+a tool worked when it was installed; this one catches later shadowing. Extend
+it when adding tools.
 
 ## Design Principles
 

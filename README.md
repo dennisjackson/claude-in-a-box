@@ -67,8 +67,15 @@ host.
 
 The container includes Clang 18, GCC 14, sccache, gdb, valgrind, clang-tidy,
 clang-format, cppcheck, weggli, semgrep, lcov, diff-cover, AFL++, angr, Z3,
-searchfox-cli, git-cinnabar, Rust, uv, PyYAML, Sphinx, tlslite-ng, vim, micro,
-tmux, and Claude Code.
+searchfox-cli, git-cinnabar, Rust, Node.js 24, uv, PyYAML, Sphinx (+
+myst-parser), tlslite-ng, profiler-cli, vim, micro, tmux, and Claude Code.
+
+`CC`/`CXX` are wrapped in sccache by default. Python libraries installed with
+pipx live in their own venvs and are reached through dedicated interpreters
+(`angr-python`, `tlslite-python`) rather than the system `python3` — see
+`container-claude/CLAUDE.md` for the full table. The Dockerfile's final layer
+asserts all of this holds in the built image, so a broken environment fails the
+build rather than showing up mid-task.
 
 ### Workspace layout
 
