@@ -33,6 +33,11 @@ Follow those instructions.
 ### Languages
 - **Rust** (rustc, cargo)
 - **Python 3**, **uv** (fast Python package manager)
+- **PyYAML** -- installed system-wide, so `#!/usr/bin/env python3` scripts can
+  `import yaml` (required by NSS's `./mach`)
+
+### Documentation
+- **Sphinx** (`sphinx-build`) -- RST documentation builder / linter
 
 ### Networking
 - **tlslite-ng** -- pure-Python TLS implementation

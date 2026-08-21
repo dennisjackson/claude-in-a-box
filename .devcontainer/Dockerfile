@@ -49,6 +49,7 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
         cppcheck \
         python3 \
         python3-distutils \
+        python3-yaml \
         pipx \
         zlib1g-dev \
         libsqlite3-dev \
@@ -66,7 +67,8 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
         ca-certificates \
         curl \
     && apt-get autoremove -y && apt-get clean -y \
-        && rm -rf /var/lib/apt/lists/*
+        && rm -rf /var/lib/apt/lists/* \
+    && python3 -c "import yaml; print('PyYAML', yaml.__version__)"
 
 # micro — terminal text editor
 RUN curl -fsSL https://getmic.ro | bash \
@@ -148,6 +150,12 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 
 # semgrep — pattern-based static analysis
 RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install semgrep
+
+# Sphinx — RST documentation builder. Required by NSS's `./mach doc-lint`,
+# which shells out to `sphinx-build`. NSS's doc/rst/conf.py declares no
+# extensions and no custom theme, so the base package is sufficient.
+RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install sphinx \
+    && sphinx-build --version
 
 # Homebrew (Linuxbrew) — used for packages not in Ubuntu repos
 # The installer refuses to run as root, so switch to vscode for this step.
