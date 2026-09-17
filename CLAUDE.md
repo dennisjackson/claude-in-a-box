@@ -85,8 +85,10 @@ host-side Claude into executing arbitrary commands.
   and preventing privilege escalation via setuid binaries.
 - **Custom seccomp profile** — a custom seccomp profile
   (`.devcontainer/seccomp.json`) extends Docker's default allowlist with
-  `ptrace` and `personality` (ADDR_NO_RANDOMIZE) for ASan support. All other
-  blocked syscalls (kexec_load, bpf, userfaultfd, etc.) remain blocked.
+  `ptrace` and `personality` (ADDR_NO_RANDOMIZE) for ASan support, and
+  `perf_event_open` for samply. All other blocked syscalls (kexec_load, bpf,
+  userfaultfd, etc.) remain blocked. See **perf_event_open** below — it is the
+  one exception with real security weight.
 - **Read-only config mounts** — `.devcontainer` and `container-claude` are
   mounted read-only so the container cannot tamper with its own build
   definition, CLAUDE.md, or settings.json.
@@ -96,6 +98,43 @@ host-side Claude into executing arbitrary commands.
   environment variable. The container has unrestricted network access, so treat
   this key as exposed to the container.
 
+### perf_event_open and the host's paranoid level
+
+samply needs `perf_event_open`, which Docker's default seccomp profile blocks.
+It is allowed in `.devcontainer/seccomp.json`. What the container can then
+*do* with it is not decided by seccomp but by the host sysctl
+`kernel.perf_event_paranoid`, which is **global and not namespaced** — one
+value governs every container on the machine, and the container cannot change
+it.
+
+| Value | What the container gets |
+|---|---|
+| `<= 0` | Samples **any** process on the host and in sibling containers (`pid=-1` / per-CPU events); kernel-space samples leak kernel addresses (KASLR defeat) |
+| `1` | Per-process profiling only — exactly what samply needs |
+| `>= 2` | User-space samples only; samply records no kernel stacks |
+
+**Keep the host at 1**:
+
+```sh
+echo 'kernel.perf_event_paranoid = 1' | sudo tee /etc/sysctl.d/60-cbx-perf.conf
+sudo sysctl --system
+```
+
+A host at `-1` also ignores the perf mlock limit, so moving to `1` can surface
+a ring-buffer size complaint from samply; `kernel.perf_event_mlock_kb=2048`
+fixes that if it happens.
+
+`cbx-connect` reads the value on every connect and warns if it is below 1;
+`internal/status.sh` reports it. Note that raising a host from `-1` to `1`
+also stops host-side system-wide profiling (`perf record -a`, `perf top`)
+for unprivileged users — that is the point, but it is a real change to the
+host, not only to the container.
+
+Seccomp cannot narrow this usefully: the interesting argument is the
+`perf_event_attr` struct behind a pointer, which seccomp cannot dereference.
+Filtering on arg 1 (`pid != -1`) is fragile (sign-extension of the `int`) and
+would likely break samply's per-CPU event setup.
+
 ### Known residual risks
 
 - The project folder bind mount is read-write, giving the container direct
@@ -103,6 +142,12 @@ host-side Claude into executing arbitrary commands.
   write-back of poisoned files).
 - The container has full outbound network access and could exfiltrate the API
   key or fetch malicious payloads.
+- `perf_event_open` is reachable from the container. Independently of the
+  paranoid level, the perf subsystem is one of the CVE-richest local
+  privilege-escalation paths in the kernel (CVE-2013-2094, CVE-2016-6787,
+  CVE-2022-1729) — lowering paranoia reduces what can be observed, not the
+  syscall's exploitable surface. This is why Docker blocks it by default; it
+  is allowed here as a deliberate trade for samply.
 
 ## Keeping Documentation in Sync
 

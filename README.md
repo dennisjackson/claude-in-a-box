@@ -68,7 +68,8 @@ host.
 The container includes Clang 18, GCC 14, sccache, gdb, valgrind, clang-tidy,
 clang-format, cppcheck, weggli, semgrep, lcov, diff-cover, AFL++, angr, Z3,
 searchfox-cli, git-cinnabar, Rust, Node.js 24, uv, PyYAML, Sphinx (+
-myst-parser), tlslite-ng, profiler-cli, vim, micro, tmux, and Claude Code.
+myst-parser), tlslite-ng, samply, profiler-cli, vim, micro, tmux, and Claude
+Code.
 
 `CC`/`CXX` are wrapped in sccache by default. The Python analysis libraries
 (angr, z3, tlslite-ng) live in a shared uv venv on Python 3.12 — the system
@@ -98,6 +99,23 @@ container output — code, files, instructions — must be reviewed carefully.
 - `.devcontainer` and `container-claude` mounted read-only.
 - No Docker socket. Non-root user (`vscode`).
 - Only `ANTHROPIC_API_KEY` enters the container.
+
+### Host setup for profiling
+
+The seccomp profile allows `perf_event_open` so samply can record. That syscall
+is governed by `kernel.perf_event_paranoid`, a **global, non-namespaced** host
+sysctl. At `0` or below, the container can sample every process on the host and
+in sibling containers and read kernel addresses. Set the host to `1`, which is
+all samply needs:
+
+```bash
+echo 'kernel.perf_event_paranoid = 1' | sudo tee /etc/sysctl.d/60-cbx-perf.conf
+sudo sysctl --system
+```
+
+`cbx-connect` warns on every connect if the value is below 1, and
+`internal/status.sh` reports it. Raising a host from `-1` to `1` also disables
+unprivileged system-wide profiling (`perf record -a`) on the host itself.
 
 ### Trust boundary
 

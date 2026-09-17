@@ -36,6 +36,34 @@ fi
 # shellcheck disable=SC1091
 source "$PROJ_DIR/.envrc"
 
+# Preflight: perf_event_paranoid.
+# The container's seccomp profile allows perf_event_open so samply can record.
+# What the kernel then permits is decided by kernel.perf_event_paranoid, which
+# is global and NOT namespaced — the container cannot change it, and it applies
+# to every container on this host:
+#   <= 0  container can sample every process on the host and in sibling
+#         containers (pid=-1 / per-CPU events) and read kernel addresses
+#      1  per-process profiling only — what samply needs, nothing more
+#   >= 2  kernel-space samples refused; samply records user stacks only
+PARANOID_FILE=/proc/sys/kernel/perf_event_paranoid
+if [ -r "$PARANOID_FILE" ]; then
+    PARANOID="$(cat "$PARANOID_FILE")"
+    case "$PARANOID" in ''|*[!0-9-]*) PARANOID= ;; esac
+fi
+if [ -n "${PARANOID:-}" ] && [ "$PARANOID" -lt 1 ]; then
+    cat >&2 <<EOF
+==> WARNING: kernel.perf_event_paranoid is $PARANOID on this host.
+    The container is allowed perf_event_open, so at this level it can sample
+    every process on the host and in sibling containers, and read kernel
+    addresses. samply only needs 1. To fix (host-wide, persistent):
+      echo 'kernel.perf_event_paranoid = 1' | sudo tee /etc/sysctl.d/60-cbx-perf.conf
+      sudo sysctl --system
+EOF
+elif [ -n "${PARANOID:-}" ] && [ "$PARANOID" -gt 1 ]; then
+    echo "==> Note: kernel.perf_event_paranoid is $PARANOID — samply cannot record" >&2
+    echo "    kernel stacks. Set it to 1 for full profiles." >&2
+fi
+
 # Check for a running container for this project
 RUNNING=$(docker ps -q --filter "label=$ID_LABEL" 2>/dev/null || true)
 if [ -n "$RUNNING" ]; then

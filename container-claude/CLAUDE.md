@@ -89,6 +89,16 @@ to sync a `pyproject.toml` it finds in the project tree.
   MyST Markdown; `./mach doc-lint` fails at config load without it)
 
 ### Profiling
+- **samply** -- sampling profiler (`samply record <command>`). It writes
+  Firefox Profiler format, so `profiler-cli` can query the result directly.
+  There is no browser in this container, so save the profile to a file rather
+  than letting samply open the profiler UI -- check `samply record --help` for
+  the current flag. Profiling needs `perf_event_open`, which the seccomp
+  profile allows, but the host sysctl `kernel.perf_event_paranoid` has the
+  final say and cannot be changed from in here: at `1` (the value this
+  container expects) you can profile processes you start, at `>= 2` you get no
+  kernel stacks. If a recording fails with a permissions error, that sysctl is
+  why -- report it rather than trying to work around it.
 - **profiler-cli** (also `pq`) -- query Firefox Profiler profiles from the
   command line; `profiler-cli guide` prints a usage walkthrough
 

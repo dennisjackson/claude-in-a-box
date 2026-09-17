@@ -98,4 +98,17 @@ else
     warn ".envrc not found — run internal/setup-envrc.sh"
 fi
 
+# perf_event_paranoid gates what the container can do with perf_event_open,
+# which its seccomp profile allows for samply. Global sysctl, not namespaced.
+PARANOID_FILE=/proc/sys/kernel/perf_event_paranoid
+if [ -r "$PARANOID_FILE" ]; then
+    PARANOID=$(cat "$PARANOID_FILE")
+    case "$PARANOID" in
+        1)  ok "kernel.perf_event_paranoid = 1 (per-process profiling only)" ;;
+        -*|0)
+            warn "kernel.perf_event_paranoid = $PARANOID — containers can sample the whole host; 1 is enough for samply" ;;
+        *)  warn "kernel.perf_event_paranoid = $PARANOID — samply gets no kernel stacks; set to 1 for full profiles" ;;
+    esac
+fi
+
 echo ""

@@ -115,6 +115,14 @@ RUN cargo install weggli \
 RUN cargo install searchfox-cli \
     && searchfox-cli --help > /dev/null
 
+# samply — sampling profiler; produces Firefox Profiler format, which the
+# profiler-cli installed further down can then query. Installed here with the
+# other cargo tools, deliberately *before* RUSTC_WRAPPER=sccache is set: at
+# this point /.sccache does not exist yet (it is created near the end of the
+# build) and sccache would try to make it at the filesystem root.
+RUN cargo install --locked samply \
+    && samply --version
+
 # sccache — shared compiler cache, dramatically speeds up rebuilds.
 # The cache directory is backed by a named volume so it survives container
 # rebuilds. CC/CXX are wrapped in sccache: left unwrapped, the cache sat
@@ -324,7 +332,7 @@ RUN set -eu; \
     /opt/pipx/venvs/sphinx/bin/python -c "import myst_parser" || fail "sphinx venv is missing myst-parser"; \
     echo "== cli tools =="; \
     for tool in sphinx-build semgrep diff-cover weggli searchfox-cli micro uv \
-                cargo rustc z3 afl-fuzz git-cinnabar profiler-cli pq bear; do \
+                cargo rustc z3 afl-fuzz git-cinnabar profiler-cli pq bear samply; do \
         command -v "$tool" > /dev/null || fail "$tool is not on PATH"; \
     done; \
     echo "all environment assertions passed"
