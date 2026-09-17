@@ -61,9 +61,16 @@ the container will pick up the project's CLAUDE.md and commands automatically.
 ## Security Model
 
 The container is an **untrusted environment**. Claude Code runs inside it with
-`CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=true` and full tool access, so any output
-from the container — files, diffs, instructions — must be treated as
-potentially compromised.
+`permissions.defaultMode: "bypassPermissions"` (set in
+`container-claude/settings.json`, which is symlinked to
+`~/.claude/settings.json` — the user scope, the only non-managed scope that
+honors `bypassPermissions`) and full tool access, so any output from the
+container — files, diffs, instructions — must be treated as potentially
+compromised. `skipDangerousModePermissionPrompt` suppresses the one-time
+bypass confirmation dialog. There is no `CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS`
+environment variable in Claude Code — an earlier version of this config set
+one and it did nothing, which is why the container still prompted for tools
+outside the old allowlist.
 
 ### Trust boundary
 

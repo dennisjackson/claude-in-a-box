@@ -88,8 +88,9 @@ build rather than showing up mid-task.
 
 ## Security Model
 
-The container is **untrusted**. Claude Code runs inside it with
-`CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=true` and full network access. All
+The container is **untrusted**. Claude Code runs inside it in
+`bypassPermissions` mode (no permission prompts, set via
+`container-claude/settings.json`) and with full network access. All
 container output — code, files, instructions — must be reviewed carefully.
 
 ### Hardening

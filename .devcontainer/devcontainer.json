@@ -36,9 +36,6 @@
     "source=${localWorkspaceFolder}/container-claude,target=/workspaces/config/container-claude,type=bind,readonly",
     "source=${localEnv:PROJECT_DIR},target=/workspaces/project,type=bind"
   ],
-  "containerEnv": {
-    "CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS": "true"
-  },
   "remoteEnv": {
     "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}"
   },
