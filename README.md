@@ -67,11 +67,16 @@ host.
 
 The container includes Clang 18, GCC 14, sccache, gdb, valgrind, clang-tidy,
 clang-format, cppcheck, weggli, semgrep, lcov, diff-cover, AFL++, angr, Z3,
-searchfox-cli, git-cinnabar, Rust, Node.js 24, uv, PyYAML, Sphinx (+
-myst-parser), tlslite-ng, samply, profiler-cli, vim, micro, tmux, and Claude
+searchfox-cli, git-cinnabar, Rust (user-writable rustup/cargo; stable +
+wasm32/i686 targets + llvm-tools, 1.85.0, nightly with Miri), cargo-binstall,
+bindgen, cargo-hack, cargo-mutants, cargo-machete, cargo-deny,
+cargo-llvm-cov, cargo-nextest, cargo-fuzz, cargo-afl,
+CMake (pinned, via uv), Node.js 24, uv, PyYAML, Sphinx (+
+myst-parser), tlslite-ng, samply, profiler-cli, vim, micro, tmux, watchman, and Claude
 Code.
 
-`CC`/`CXX` are wrapped in sccache by default. The Python analysis libraries
+`CC`/`CXX` are wrapped in sccache by default, via single-path wrapper scripts
+so `$CC` can be passed to CMake as a compiler path. The Python analysis libraries
 (angr, z3, tlslite-ng) live in a shared uv venv on Python 3.12 — the system
 `python3` is Ubuntu 22.04's 3.10, which current angr does not support — and
 are reached through `analysis-python` rather than `python3`; see

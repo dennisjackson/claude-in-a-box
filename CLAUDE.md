@@ -183,13 +183,60 @@ any sections that are affected. In particular:
 ## Toolchain
 
 The container ships **Clang 18** (from the official LLVM apt repository) and
-defaults to `CC="sccache clang" CXX="sccache clang++"`, with `RUSTC_WRAPPER`
-also set to sccache. CC/CXX were previously left unwrapped on the theory that
-projects like Mozilla manage their own sccache wrapping — in practice the cache
-logged zero compile requests across full NSS builds, so it is wired in by
-default now. Builds that do their own wrapping override CC/CXX anyway. The
+defaults CC/CXX to sccache wrappers, with `RUSTC_WRAPPER` also set to
+sccache. CC/CXX were previously left unwrapped on the theory that projects
+like Mozilla manage their own sccache wrapping — in practice the cache logged
+zero compile requests across full NSS builds, so it is wired in by default
+now. Builds that do their own wrapping override CC/CXX anyway. The wrapping
+is done with **single-path wrapper scripts**
+(`/usr/local/lib/sccache-wrap/clang` and `clang++`, which
+`exec sccache /usr/local/bin/clang[++]`), not the two-word
+`CC="sccache clang"` used earlier: build scripts that pass `$CC` to
+`-DCMAKE_C_COMPILER` (BoringSSL's, for one) failed with "not a full path".
+The scripts are named exactly `clang`/`clang++` so basename-sniffing still
+identifies the compiler, and live off `PATH` so they shadow nothing. The
 sccache directory is backed by a named Docker volume (`claude-dev-sccache`) so
 it persists across container rebuilds and project switches.
+
+**CMake** is a uv tool (the PyPI `cmake` package, which wraps Kitware's
+official binaries), pinned via `CMAKE_VERSION` in the Dockerfile, with its
+entry points in `/usr/local/bin` and its venv in `/opt/uv-tools`. Ubuntu's
+3.22 is too old for BoringSSL's `$<LIST:TRANSFORM>` (>= 3.27), so the apt
+package is not installed at all.
+
+**Rust** lives in `/usr/local/rustup` and `/usr/local/cargo`, **owned by
+`vscode`** and installed as `vscode` (along with weggli, searchfox-cli,
+samply, sccache and bindgen-cli) rather than chowned afterwards, which would
+duplicate the toolchain into another layer. Root-owned homes made `cargo
+build` fail writing the registry and blocked every `rustup target`/
+`toolchain`/`component` change (cross targets, MSRV, Miri, llvm-tools). Do not
+`cargo install` as root in later layers — the environment assertion fails the
+build if anything in either home is not owned by `vscode`.
+
+Two size rules for the Rust layers. Stable is installed with the **minimal
+profile plus clippy and rustfmt**: the default profile's `rust-docs` is
+~900 MB of offline HTML. And every layer that runs cargo **deletes
+`$CARGO_HOME/registry` and `git` in the same `RUN`** — the crate sources left
+behind by the tool installs came to ~700 MB, and deleting them in a later
+layer would not shrink the image. The environment assertion fails the build
+if a registry is left behind.
+
+The image pre-installs what a typical Rust CI matrix needs, so it is not
+re-downloaded per container: stable with `wasm32-unknown-unknown`,
+`i686-unknown-linux-gnu` and `llvm-tools-preview`; an MSRV toolchain
+(`RUST_MSRV`, 1.85.0); and nightly (`RUST_NIGHTLY`, unpinned by default — set
+it to `nightly-YYYY-MM-DD` for reproducible rebuilds) with `miri` and
+`rust-src`, plus a pre-built Miri sysroot. i686 linking needs 32-bit
+libc/libgcc, so the GCC layer adds `gcc-14-multilib`/`g++-14-multilib` on
+x86_64. Cargo tools (bindgen-cli, cargo-hack, cargo-mutants, cargo-machete,
+cargo-deny, cargo-llvm-cov, cargo-nextest, cargo-fuzz, cargo-afl) are
+installed with **cargo-binstall** using upstream release binaries; its
+`quick-install` strategy (binaries built by the third-party
+cargo-quickinstall service) is disabled. cargo-afl builds its AFL++ runtime
+for the stable rustc during install. A separate **Rust assertion layer**, run as
+`vscode` under the runtime env (`RUSTC_WRAPPER=sccache`), builds a tiny crate
+through each of these: stable test, wasm32, i686, MSRV, Miri, llvm-cov and
+nextest.
 
 **Node.js 24** is installed from the official tarball (pinned via
 `NODE_VERSION` in the Dockerfile), which provides `node`/`npm`/`npx` and backs
@@ -211,18 +258,29 @@ imports against the base interpreter. Installing the venv at build time also
 warms `UV_CACHE_DIR` (`/opt/uv/cache`), so ad-hoc
 `uv run --no-project --with angr` inside the container resolves from cache.
 
-**Homebrew sits at the back of `PATH`.** Its watchman dependency tree ships its
-own python3, binutils, gfortran and openssl, which shadowed ~70 system binaries
-when brew was at the front — `/usr/bin/env python3` lost PyYAML (breaking
-`./mach`) and clang linked against brew's rolling `ld` instead of Ubuntu's
-binutils. Keep new brew installs to things nothing else provides.
+**There is no Homebrew.** It was there for watchman alone, whose brew
+dependency tree (gcc, boost, binutils, python, openssl...) cost ~1.9 GB and
+shadowed ~70 system binaries — `/usr/bin/env python3` lost PyYAML (breaking
+`./mach`) and clang linked against brew's rolling `ld` — until brew was moved
+to the back of `PATH`. watchman now comes from apt (Ubuntu's 4.9.0, old but
+under 1 MB). Facebook's prebuilt Linux zips do not work on jammy: releases
+after 2024.04 need glibc 2.38 (jammy has 2.35), and older ones link OpenSSL
+1.1, which jammy does not ship.
+
+**`devcontainer.json` declares no features.** The `mcr.microsoft.com/
+devcontainers/base` image is already built with `common-utils` and `git`;
+re-declaring them made the devcontainer CLI re-apply them on top of the
+Dockerfile's image, adding a ~376 MB layer for nothing (the Dockerfile also
+installs a current git from the git-core PPA).
 
 The last layer in the Dockerfile is an **environment-assertion `RUN`** that
-re-checks the finished image: no critical binary resolving into the Homebrew
-prefix, `import yaml` from the system python3, a real compile/link/ASan-link
+re-checks the finished image: every critical binary resolving into the
+system or cargo bin dirs (nothing shadowing them), `import yaml` from the system python3, a real compile/link/ASan-link
 through `$CC`/`$CXX` with a non-zero sccache request count, each Python island
 (every `*-python` wrapper importing the analysis libraries on a >= 3.12
-interpreter, and the sphinx pipx venv), and the expected CLI tools. Per-layer
+interpreter, and the sphinx pipx venv), CMake >= 3.27 configuring and
+building with `$CC`/`$CXX` as the compiler path, bindgen loading libclang,
+`vscode` ownership of the Rust homes, and the expected CLI tools. Per-layer
 smoke tests can only prove
 a tool worked when it was installed; this one catches later shadowing. Extend
 it when adding tools.
