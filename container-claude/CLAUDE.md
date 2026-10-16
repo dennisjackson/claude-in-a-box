@@ -148,6 +148,8 @@ to sync a `pyproject.toml` it finds in the project tree.
 
 ### Terminal
 - **tmux** -- terminal multiplexer
+- **GNU parallel** -- run shell jobs in parallel (`parallel cmd ::: args`);
+  Ubuntu's 20210822 build
 
 ### Environment
 - **direnv** -- automatic per-directory environment variables

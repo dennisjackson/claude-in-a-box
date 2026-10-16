@@ -72,7 +72,7 @@ wasm32/i686 targets + llvm-tools, 1.85.0, nightly with Miri), cargo-binstall,
 bindgen, cargo-hack, cargo-mutants, cargo-machete, cargo-deny,
 cargo-llvm-cov, cargo-nextest, cargo-fuzz, cargo-afl,
 CMake (pinned, via uv), Node.js 24, uv, PyYAML, Sphinx (+
-myst-parser), tlslite-ng, samply, profiler-cli, vim, micro, tmux, watchman, and Claude
+myst-parser), tlslite-ng, samply, profiler-cli, vim, micro, tmux, GNU parallel, watchman, and Claude
 Code.
 
 `CC`/`CXX` are wrapped in sccache by default, via single-path wrapper scripts

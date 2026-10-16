@@ -69,6 +69,7 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
         bear \
         vim \
         tmux \
+        parallel \
         ca-certificates \
         curl \
     && apt-get autoremove -y && apt-get clean -y \
@@ -440,6 +441,8 @@ RUN set -eu; \
     [ -x /usr/local/bin/clang ] || fail "/usr/local/bin/clang is missing (devcontainer.json C_Cpp.default.compilerPath points at it)"; \
     ld --version | head -1 | grep -q 'GNU ld' || fail "ld is not GNU binutils"; \
     watchman --version > /dev/null || fail "watchman does not run"; \
+    parallel --version | head -1 | grep -q '^GNU parallel' || fail "parallel is not GNU parallel (moreutils?)"; \
+    [ "$(parallel -k echo ::: a b </dev/null)" = "$(printf 'a\nb')" ] || fail "GNU parallel does not run jobs"; \
     for h in "$RUSTUP_HOME" "$CARGO_HOME"; do \
         bad="$(find "$h" ! -user vscode -print -quit)"; \
         [ -z "$bad" ] || fail "$h is not entirely owned by vscode ($bad) — cargo/rustup will fail at runtime"; \
